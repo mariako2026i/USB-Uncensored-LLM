@@ -152,3 +152,7 @@ If you want to use the Heavyweight AI from your phone while lounging on the couc
 ---
 > *Disclaimer: USB-Uncensored-LLM is built for uncompromising computational freedom. By utilizing ablative models, the system will not moralize, lecture, or refuse your prompts. Please use responsibly.*
 # USB-Uncensored-LLM
+
+## Персональный режим Windows
+
+В этой рабочей копии есть режим с облачными моделями, русским голосовым вводом, PowerShell и деплоем проекта по SSH. [Инструкция на русском](Windows/PERSONAL.ru.md).

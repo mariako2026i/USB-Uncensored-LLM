@@ -1,0 +1,14 @@
+[
+  {
+    "id": "OpenAI",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-4.1-mini",
+    "key_env": "OPENAI_API_KEY"
+  },
+  {
+    "id": "Other",
+    "base_url": "https://example.com/v1",
+    "model": "your-provider-model",
+    "key_env": "OTHER_API_KEY"
+  }
+]

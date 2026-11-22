@@ -1991,6 +1991,8 @@
                 aria-label="Message input"
               ></textarea>
               <div class="ia">
+                <button type="button" id="personal-mic" hidden aria-label="Говорить">🎙</button>
+                <button type="button" id="personal-command" hidden>Команда</button>
                 <button
                   class="ib2"
                   id="att-btn"
@@ -2241,10 +2243,21 @@
 
       async function fetchModels() {
         try {
-          const r = await fetch(OLLAMA + '/api/tags');
-          if (!r.ok) throw new Error();
-          const d = await r.json();
-          S.models = Array.isArray(d.models) ? d.models : [];
+          const readModels = async (url) => {
+            try {
+              const response = await fetch(url);
+              if (response.ok) {
+                const data = await response.json();
+                if (Array.isArray(data.models)) return data.models;
+              }
+            } catch {}
+            return [];
+          };
+          const cloud = IS_SERVED ? readModels('/api/cloud/models') : Promise.resolve([]);
+          const [localModels, cloudModels] = await Promise.all([
+            readModels(OLLAMA + '/api/tags'), cloud,
+          ]);
+          S.models = [...localModels, ...cloudModels];
           S.engineReady = S.models.length > 0;
           renderModelMenu();
           if (
@@ -2281,11 +2294,11 @@
         D.modelMenu.innerHTML = S.models
           .map(
             (m) => `
-        <div class="mm-opt ${m.name === S.model ? 'sel' : ''}" data-model="${m.name}">
+        <div class="mm-opt ${m.name === S.model ? 'sel' : ''}" data-model="${esc(m.name).replace(/"/g, '&quot;')}">
             <div class="mmo-icon"><i class="fa-solid ${isVision(m.name) ? 'fa-eye' : 'fa-microchip'}"></i></div>
             <div class="mmo-info">
                 <div class="mmo-name">${esc(m.name)}</div>
-                <div class="mmo-desc">${(m.size / 1e9).toFixed(1)} GB</div>
+                <div class="mmo-desc">${m.cloud ? 'Облако' : (m.size / 1e9).toFixed(1) + ' GB'}</div>
             </div>
             <i class="fa-solid fa-check mmo-chk"></i>
         </div>`,
@@ -2697,7 +2710,12 @@
 
         let liveRenderTimer = null;
         try {
-          const res = await fetch(OLLAMA + '/api/chat', {
+          const cloud = conv.model.startsWith('cloud/');
+          if (cloud && !window.confirm('Отправить историю этого чата выбранному облачному провайдеру?')) {
+            throw new Error('Отправка в облако отменена');
+          }
+          const endpoint = cloud ? '/api/cloud/chat' : OLLAMA + '/api/chat';
+          const res = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2752,11 +2770,13 @@
             scrollEnd();
           };
 
+          let buffer = '';
           while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
-            const chunk = dec.decode(value, { stream: true });
-            for (const line of chunk.split('\n')) {
+            buffer += dec.decode(value, { stream: !done });
+            const lines = buffer.split('\n');
+            buffer = done ? '' : lines.pop();
+            for (const line of lines) {
               if (!line.trim()) continue;
               try {
                 const p = JSON.parse(line);
@@ -2793,6 +2813,7 @@
                 }
               } catch {}
             }
+            if (done) break;
           }
           if (liveRenderTimer) clearTimeout(liveRenderTimer);
           aiMsg.metrics.elapsedMs = performance.now() - startedAt;
@@ -2853,7 +2874,7 @@
 
       // ÔöÇÔöÇ Markdown ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
       function setupMarked() {
-        if (typeof marked === 'undefined') return;
+        if (window.personalMode || typeof marked === 'undefined') return;
         const rdr = new marked.Renderer();
         rdr.code = (code, lang) => {
           const sl = esc(lang || '');
@@ -3259,5 +3280,6 @@
       // ÔöÇÔöÇ Start ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
       init();
     </script>
+    <script src="/personal.js"></script>
   </body>
 </html>

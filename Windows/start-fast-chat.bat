@@ -1,4 +1,5 @@
 @echo off
+setlocal
 title Portable AI - Fast Web Chat
 color 0B
 
@@ -87,6 +88,7 @@ if not exist "%~dp0..\Shared\bin\ollama-windows.exe" (
 curl -s http://127.0.0.1:11434/api/tags >nul 2>&1
 if %errorlevel%==0 (
     echo [OK] Ollama engine is already running!
+    set "USB_AI_REUSED_ENGINE=1"
     goto :StartChat
 )
 
@@ -112,9 +114,9 @@ echo  Close this window to shut down everything.
 echo ===================================================
 echo.
 
-%PYTHON_CMD% "%~dp0..\Shared\chat_server.py"
+"%PYTHON_CMD%" "%~dp0..\Shared\chat_server.py" %*
 
 echo Shutting down...
-taskkill /f /im ollama-windows.exe >nul 2>&1
+if not defined USB_AI_REUSED_ENGINE taskkill /f /im ollama-windows.exe >nul 2>&1
 echo Done. Goodbye!
 pause

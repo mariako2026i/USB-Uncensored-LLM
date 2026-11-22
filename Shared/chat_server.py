@@ -37,6 +37,7 @@ except ImportError:
 
 # ── Configuration ──────────────────────────────────────────────
 CHAT_SERVER_PORT = 3333
+PERSONAL_MODE = "--personal" in sys.argv
 OLLAMA_HOST = "http://127.0.0.1:11434"
 LLAMA_CPP_MODE = "--llama-cpp" in sys.argv
 if LLAMA_CPP_MODE:
@@ -44,6 +45,11 @@ if LLAMA_CPP_MODE:
 
 # Always resolve paths relative to THIS script's location (the USB drive)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if PERSONAL_MODE:
+    # The Windows embeddable Python distribution isolates its import paths.
+    sys.path.insert(0, SCRIPT_DIR)
+    import cloud_models
+    import personal_actions
 CHATS_DIR = os.path.join(SCRIPT_DIR, "chat_data")
 CHATS_FILE = os.path.join(CHATS_DIR, "chats.json")
 SETTINGS_FILE = os.path.join(CHATS_DIR, "settings.json")
@@ -454,12 +460,60 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
         self._cors_headers()
         self.end_headers()
 
+    def parse_request(self):
+        if not super().parse_request():
+            return False
+        if PERSONAL_MODE:
+            hosts = {f"localhost:{CHAT_SERVER_PORT}", f"127.0.0.1:{CHAT_SERVER_PORT}"}
+            host = self.headers.get("Host")
+            origin = self.headers.get("Origin")
+            if host not in hosts or (origin and origin != f"http://{host}"):
+                self.send_error(403)
+                return False
+        return True
+
+    def _cloud_response(self, chat=False):
+        status = 200
+        content_type = "application/json"
+        try:
+            configured = cloud_models.providers()
+            if chat:
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 0 < size <= 2 * 1024 * 1024:
+                    raise ValueError("Invalid request size")
+                data = json.loads(self.rfile.read(size))
+                result = cloud_models.complete(configured[data["model"]], data["messages"])
+                content_type = "application/x-ndjson"
+            else:
+                result = json.dumps({"models": [{"name": name, "size": 0, "cloud": True}
+                                                for name in configured]}).encode()
+        except urllib.error.HTTPError as error:
+            status = 502
+            result = json.dumps({"error": f"Provider HTTP {error.code}"}).encode()
+        except (ValueError, LookupError, OSError, TypeError, AttributeError):
+            status = 502
+            result = b'{"error":"Check provider configuration, credentials and text-only input."}'
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(result)))
+        self.end_headers()
+        self.wfile.write(result)
+
     # ── Routing ────────────────────────────────────────────────
     def do_GET(self):
         path = urlparse(self.path).path
 
+        if PERSONAL_MODE and path == "/api/cloud/models":
+            self._cloud_response()
+        elif PERSONAL_MODE and path == "/personal.js":
+            with open(os.path.join(SCRIPT_DIR, "personal.js"), "rb") as script:
+                payload = script.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/javascript; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(payload)
         # Serve the main UI
-        if path == "/" or path == "/index.html":
+        elif path == "/" or path == "/index.html":
             self._serve_html()
 
         # Chat data API
@@ -485,7 +539,37 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
 
-        if path == "/api/chats":
+        if PERSONAL_MODE and path == "/api/cloud/chat":
+            if (self.headers.get("Origin") != "http://" + self.headers["Host"]
+                    or self.headers.get_content_type() != "application/json"):
+                self.send_error(403)
+                return
+            self._cloud_response(chat=True)
+
+        elif PERSONAL_MODE and path == "/api/personal/action":
+            if (self.headers.get("Origin") != "http://" + self.headers["Host"]
+                    or self.headers.get_content_type() != "application/json"):
+                self.send_error(403)
+                return
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 0 < size <= 1024:
+                    raise ValueError()
+                action = json.loads(self.rfile.read(size))["action"]
+                result = personal_actions.execute(action)
+                status = 200
+            except (ValueError, LookupError, TypeError):
+                result, status = {"output": "Неизвестная команда."}, 400
+            except OSError:
+                result, status = {"output": "Не удалось запустить команду. Проверьте настройки."}, 500
+            body = json.dumps(result).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        elif path == "/api/chats":
             self._save_chats()
 
         elif path == "/api/settings":
@@ -516,6 +600,8 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
                 content = f.read()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            if PERSONAL_MODE:
+                self.send_header("X-Frame-Options", "DENY")
             self._cors_headers()
             self.end_headers()
             self.wfile.write(content)
@@ -527,10 +613,13 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
     def _serve_static(self, path):
         """Serve static files (CSS, JS, images) from SCRIPT_DIR."""
         safe_path = os.path.normpath(path.lstrip("/"))
-        full_path = os.path.join(SCRIPT_DIR, safe_path)
+        full_path = os.path.realpath(os.path.join(SCRIPT_DIR, safe_path))
+        if PERSONAL_MODE and not safe_path.startswith("vendor" + os.sep):
+            self.send_error(404)
+            return
 
         # Security: don't allow path traversal
-        if not full_path.startswith(SCRIPT_DIR):
+        if not full_path.startswith(os.path.realpath(SCRIPT_DIR) + os.sep):
             self.send_response(403)
             self.end_headers()
             return
@@ -904,7 +993,8 @@ def main():
     print("=" * 55)
     print()
     print(f"  Local Access:    http://localhost:{CHAT_SERVER_PORT}")
-    print(f"  Network Access:  http://{local_ip}:{CHAT_SERVER_PORT}   <-- Use this on phone/other PC!")
+    if not PERSONAL_MODE:
+        print(f"  Network Access:  http://{local_ip}:{CHAT_SERVER_PORT}   <-- Use this on phone/other PC!")
     print(f"  Ollama/Llama Proxy: {OLLAMA_HOST}")
     if LLAMA_CPP_MODE:
         print("  Running in LLAMA_CPP_MODE (Translating API requests)")
@@ -914,7 +1004,7 @@ def main():
     print()
     print("-" * 55)
 
-    server = ThreadedHTTPServer(("0.0.0.0", CHAT_SERVER_PORT), ChatHandler)
+    server = ThreadedHTTPServer(("127.0.0.1" if PERSONAL_MODE else "0.0.0.0", CHAT_SERVER_PORT), ChatHandler)
 
     # Open browser in background thread
     if "--no-browser" not in sys.argv:

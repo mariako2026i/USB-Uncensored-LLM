@@ -20,3 +20,5 @@ Shared/logs/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+/Shared/personal-models.json
