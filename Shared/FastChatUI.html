@@ -1992,6 +1992,7 @@
               ></textarea>
               <div class="ia">
                 <button type="button" id="personal-mic" hidden aria-label="Говорить">🎙</button>
+                <button type="button" id="personal-voice" hidden>🔊</button>
                 <button type="button" id="personal-command" hidden>Команда</button>
                 <button
                   class="ib2"
@@ -2536,6 +2537,7 @@
       }
 
       function delConv(id) {
+        if (S.curId === id) window.personalVoice?.stop();
         S.convs = S.convs.filter((c) => c.id !== id);
         save();
         if (S.curId === id) {
@@ -2547,6 +2549,7 @@
       }
 
       function clearAll() {
+        window.personalVoice?.stop();
         S.convs = [];
         S.curId = null;
         save();
@@ -2556,6 +2559,7 @@
       }
 
       function switchConv(id) {
+        if (S.curId !== id) window.personalVoice?.stop();
         S.curId = id;
         const conv = getConv();
         if (conv && conv.model) applyModel(conv.model);
@@ -2668,6 +2672,7 @@
       }
 
       async function streamOllama(conv) {
+        const voice = window.personalVoice?.start();
         S.streaming = true;
         updateSend();
 
@@ -2792,6 +2797,7 @@
                   );
                   updateMsgStats(aiMsg);
                   paintLive(p.message.content.includes('\n'));
+                  voice?.append(p.message.content);
                 }
                 if (p.done) {
                   aiMsg.metrics.elapsedMs = performance.now() - startedAt;
@@ -2815,6 +2821,7 @@
             }
             if (done) break;
           }
+          voice?.finish();
           if (liveRenderTimer) clearTimeout(liveRenderTimer);
           aiMsg.metrics.elapsedMs = performance.now() - startedAt;
           aiMsg.metrics.done = true;
@@ -2826,6 +2833,7 @@
             });
           }
         } catch (err) {
+          voice?.stop();
           aiMsg.pending = false;
           aiMsg.status = '';
           if (err.name === 'AbortError') {
@@ -2862,6 +2870,7 @@
       }
 
       function stopStream() {
+        window.personalVoice?.stop();
         if (S.abort) S.abort.abort();
       }
 
