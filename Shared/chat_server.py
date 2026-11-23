@@ -507,7 +507,7 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
             result = json.dumps({"error": message}).encode()
         except (LookupError, OSError, TypeError, AttributeError):
             status = 502
-            message = ("Не удалось получить ответ Кодекса. Проверьте подключение к OpenAI API."
+            message = ("Не удалось получить ответ Кодекса. Проверьте подключение и способ запуска Миры."
                        if codex else "Check provider configuration, credentials and text-only input.")
             result = json.dumps({"error": message}).encode()
         self.send_response(status)

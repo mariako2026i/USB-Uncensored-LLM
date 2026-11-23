@@ -8,6 +8,8 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
+import personal_codex
+
 CONFIG = Path(__file__).with_name("personal-models.json")
 PREFIX = "cloud/"
 
@@ -57,6 +59,9 @@ def complete(provider, messages):
 def ask_codex(question):
     if not isinstance(question, str) or not 0 < len(question.strip()) <= 6000:
         raise ValueError("Некорректная длина вопроса Кодексу.")
+    project = os.environ.get("USB_AI_CRM_PROJECT")
+    if project:
+        return chat_line(personal_codex.ask(project, question.strip()))
     key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not key:
         raise ValueError("Для Кодекса задайте OPENAI_API_KEY и перезапустите Миру.")

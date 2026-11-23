@@ -298,7 +298,7 @@ window.personalMode = true;
         question = question.slice(codexRequest[0].length);
         if (!question) {
           session.codexUntil = session.until;
-          say('Задайте вопрос Кодексу. В OpenAI уйдёт только этот вопрос.');
+          say('Задайте вопрос Кодексу. В режиме CRM Кодекс использует файлы выбранного проекта.');
           const prompt = window.personalVoice?.start();
           prompt?.append('Какой вопрос передать Кодексу?');
           prompt?.finish();
