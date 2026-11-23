@@ -24,10 +24,11 @@ window.personalMode = true;
 
   const voiceButton = document.getElementById('personal-voice');
   const synthesis = window.speechSynthesis;
-  if (synthesis && window.SpeechSynthesisUtterance) {
+  if (voiceButton) {
     const preference = 'usb-ai-speak-replies';
     let enabled = true;
     let active = null;
+    let piperAvailable = true;
     try { enabled = localStorage.getItem(preference) !== 'off'; } catch {}
 
     function updateVoiceButton() {
@@ -38,8 +39,9 @@ window.personalMode = true;
     }
 
     function stopVoice() {
+      active?.cancel();
       active = null;
-      synthesis.cancel();
+      synthesis?.cancel();
     }
 
     function startVoice() {
@@ -47,7 +49,12 @@ window.personalMode = true;
       if (!enabled) return;
       let pending = '';
       let inCodeBlock = false;
+      const abort = new AbortController();
+      let queue = Promise.resolve();
+      let waiting = 0;
       const session = {
+        cancel() { abort.abort(); },
+        playing() { return waiting > 0; },
         append(text) {
           if (active !== session) return;
           pending += text;
@@ -70,20 +77,70 @@ window.personalMode = true;
         }
         const text = prose.join(' ').replace(/[*#_`]+/g, '').trim();
         if (!text) return;
-        const line = new SpeechSynthesisUtterance(text);
-        const lang = /[А-Яа-яЁё]/.test(text) ? 'ru' : 'en';
-        line.lang = lang === 'ru' ? 'ru-RU' : 'en-US';
-        const voice = synthesis.getVoices().find(
-          (candidate) => candidate.localService && candidate.lang.toLowerCase().split(/[-_]/)[0] === lang,
-        );
-        if (voice) line.voice = voice;
-        line.onerror = (event) => {
-          if (active === session && !['canceled', 'interrupted'].includes(event.error)) {
-            stopVoice();
-            say('Не удалось озвучить ответ. Проверьте доступность голоса в браузере.');
+        waiting++;
+        queue = queue.then(async () => {
+          if (abort.signal.aborted) return;
+          const russian = /[А-Яа-яЁё]/.test(text);
+          if (russian && piperAvailable && await playPiper(text)) return;
+          if (!abort.signal.aborted) await playBrowser(text, russian);
+        }).catch(() => {
+          if (active === session) say('Не удалось озвучить ответ.');
+        }).finally(() => { waiting--; });
+      }
+
+      async function playPiper(text) {
+        try {
+          const response = await fetch('/api/personal/speak', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({text}), signal: abort.signal,
+          });
+          if (response.status === 404) piperAvailable = false;
+          if (!response.ok) return false;
+          const wav = await response.blob();
+          if (abort.signal.aborted) return true;
+          const url = URL.createObjectURL(wav);
+          try {
+            const audio = new Audio(url);
+            let stop;
+            try {
+              await new Promise((resolve, reject) => {
+                stop = () => { audio.pause(); resolve(); };
+                abort.signal.addEventListener('abort', stop, {once: true});
+                audio.onended = resolve;
+                audio.onerror = reject;
+                audio.play().catch(reject);
+              });
+            } finally {
+              abort.signal.removeEventListener('abort', stop);
+            }
+          } finally {
+            URL.revokeObjectURL(url);
           }
-        };
-        synthesis.speak(line);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
+      function playBrowser(text, russian) {
+        if (!synthesis || !window.SpeechSynthesisUtterance) {
+          throw new Error('No browser speech synthesis');
+        }
+        return new Promise((resolve, reject) => {
+          const line = new SpeechSynthesisUtterance(text);
+          const lang = russian ? 'ru' : 'en';
+          line.lang = russian ? 'ru-RU' : 'en-US';
+          const voice = synthesis.getVoices().find(
+            (candidate) => candidate.localService && candidate.lang.toLowerCase().split(/[-_]/)[0] === lang,
+          );
+          if (voice) line.voice = voice;
+          line.onend = resolve;
+          line.onerror = (event) => {
+            if (['canceled', 'interrupted'].includes(event.error)) resolve();
+            else reject(new Error(event.error));
+          };
+          synthesis.speak(line);
+        });
       }
 
       function flush(final) {
@@ -112,7 +169,7 @@ window.personalMode = true;
       return session;
     }
 
-    window.personalVoice = {start: startVoice, stop: stopVoice};
+    window.personalVoice = {start: startVoice, stop: stopVoice, playing: () => active?.playing()};
     voiceButton.classList.add('ib2');
     voiceButton.hidden = false;
     updateVoiceButton();
@@ -277,7 +334,7 @@ window.personalMode = true;
       const processor = context.createScriptProcessor(2048, 1, 1);
       session.processor = processor;
       processor.onaudioprocess = (event) => {
-        const playing = window.speechSynthesis?.speaking || window.speechSynthesis?.pending;
+        const playing = window.personalVoice?.playing() || window.speechSynthesis?.speaking;
         if (session !== mira || session.busy || S.streaming || playing) {
           if (playing && session.until) session.until = Date.now() + 20000;
           chunks = [];

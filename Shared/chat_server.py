@@ -51,6 +51,7 @@ if PERSONAL_MODE:
     import cloud_models
     import personal_actions
     import personal_whisper
+    import personal_voice
     import subprocess
 CHATS_DIR = os.path.join(SCRIPT_DIR, "chat_data")
 CHATS_FILE = os.path.join(CHATS_DIR, "chats.json")
@@ -538,6 +539,36 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
             # Try serving static files from SCRIPT_DIR
             self._serve_static(path)
 
+    def _mira_speak(self):
+        if (self.headers.get("Origin") != "http://" + self.headers["Host"]
+                or self.headers.get_content_type() != "application/json"):
+            self.send_error(403)
+            return
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 0 < size <= 4096:
+                raise ValueError()
+            payload = json.loads(self.rfile.read(size))
+            text = payload.get("text") if isinstance(payload, dict) else None
+            if not isinstance(text, str) or not 0 < len(text.strip()) <= 300:
+                raise ValueError()
+            if not personal_voice.ready():
+                self.send_error(404)
+                return
+            audio = personal_voice.synthesize(text.strip())
+        except (ValueError, UnicodeError):
+            self.send_error(400)
+            return
+        except (OSError, subprocess.SubprocessError):
+            self.send_error(503)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/wav")
+        self.send_header("Content-Length", str(len(audio)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(audio)
+
     def _mira_transcribe(self):
         if (self.headers.get("Origin") != "http://" + self.headers["Host"]
                 or self.headers.get_content_type() != "audio/wav"):
@@ -573,6 +604,9 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
                 self.send_error(403)
                 return
             self._cloud_response(chat=True)
+
+        elif PERSONAL_MODE and path == "/api/personal/speak":
+            self._mira_speak()
 
         elif PERSONAL_MODE and path == "/api/personal/transcribe":
             self._mira_transcribe()

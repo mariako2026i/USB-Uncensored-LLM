@@ -9,13 +9,18 @@ import wave
 
 ROOT = Path(__file__).resolve().parent / "bin" / "mira-whisper"
 EXE = ROOT / "Release" / "whisper-cli.exe"
-MODEL = ROOT / "ggml-base-q5_1.bin"
+STANDARD_MODEL = ROOT / "ggml-base-q5_1.bin"
+ACCURATE_MODEL = ROOT / "ggml-small-q5_1.bin"
 MAX_BYTES = 400_000
 LOCK = threading.Lock()
 
 
+def model_path():
+    return ACCURATE_MODEL if ACCURATE_MODEL.is_file() else STANDARD_MODEL
+
+
 def ready():
-    return EXE.is_file() and MODEL.is_file()
+    return EXE.is_file() and model_path().is_file()
 
 
 def transcribe(data):
@@ -37,7 +42,7 @@ def transcribe(data):
             recording = Path(folder) / "voice.wav"
             recording.write_bytes(data)
             subprocess.run(
-                [str(EXE), "-m", str(MODEL), "-f", str(recording), "-l", "ru",
+                [str(EXE), "-m", str(model_path()), "-f", str(recording), "-l", "ru",
                  "-ng", "-t", "4", "-otxt", "-of", str(recording.with_suffix(""))],
                 cwd=EXE.parent, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL, timeout=40, check=True,
