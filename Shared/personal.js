@@ -266,9 +266,10 @@ window.personalMode = true;
       if (session !== mira) return;
       if (!response.ok) throw new Error(result.error);
       const text = result.text.trim();
-      const wake = /^мира(?=$|[\s,!.?—:;-])[\s,!.?—:;-]*/i.exec(text);
+      const wake = /^[мн]ира(?=$|[\s,!.?—:;-])[\s,!.?—:;-]*/i.exec(text);
       if (wake && /^стоп[.!?…]*$/i.test(text.slice(wake[0].length))) {
         session.reply = null;
+        session.codexUntil = 0;
         stopStream();
         session.until = Date.now() + 20000;
         say('Остановлено. Скажите исправленный вопрос.');
@@ -276,9 +277,10 @@ window.personalMode = true;
       }
       if (interruptOnly || replyInProgress()) return;
       if (!wake && (!session.until || Date.now() >= session.until)) return;
-      const question = wake ? text.slice(wake[0].length) : text;
+      let question = wake ? text.slice(wake[0].length) : text;
       if (/^(стоп|закончи разговор)[.!?]*$/i.test(question)) {
         session.until = 0;
+        session.codexUntil = 0;
         say('Скажите «Мира», чтобы начать разговор.');
         return;
       }
@@ -290,9 +292,22 @@ window.personalMode = true;
         acknowledgement?.finish();
         return;
       }
-      if (await run(question)) return;
+      const codexRequest = /^спроси\s+у\s+кодекса(?=$|[\s,.!?—:;-])[\s,.!?—:;-]*/i.exec(question);
+      const codex = !!codexRequest || Date.now() < session.codexUntil;
+      if (codexRequest) {
+        question = question.slice(codexRequest[0].length);
+        if (!question) {
+          session.codexUntil = session.until;
+          say('Задайте вопрос Кодексу. В OpenAI уйдёт только этот вопрос.');
+          const prompt = window.personalVoice?.start();
+          prompt?.append('Какой вопрос передать Кодексу?');
+          prompt?.finish();
+          return;
+        }
+      }
+      if (!codex && await run(question)) return;
       if (session !== mira) return;
-      if (!S.engineReady || !S.model) {
+      if (!codex && (!S.engineReady || !S.model)) {
         say('Выберите модель в чате.');
         return;
       }
@@ -300,8 +315,9 @@ window.personalMode = true;
         say('Завершите текущий ответ или очистите черновик и повторите вопрос.');
         return;
       }
-      say('Мира отвечает…');
-      const reply = sendMsg(question);
+      session.codexUntil = 0;
+      say(codex ? 'Спрашиваю Кодекса…' : 'Мира отвечает…');
+      const reply = sendMsg(question, {codex});
       session.reply = reply;
       reply.then(() => {
         if (session !== mira || session.reply !== reply) return;
@@ -329,7 +345,7 @@ window.personalMode = true;
       say('Ожидание имени выключено.');
       return;
     }
-    const session = {abort: new AbortController(), until: 0, busy: false};
+    const session = {abort: new AbortController(), until: 0, codexUntil: 0, busy: false};
     mira = session;
     miraButton.setAttribute('aria-pressed', 'true');
     miraButton.style.background = 'var(--grad1)';
@@ -357,6 +373,7 @@ window.personalMode = true;
       processor.onaudioprocess = (event) => {
         const replying = replyInProgress();
         if (replying && session.until) session.until = Date.now() + 20000;
+        if (replying && session.codexUntil) session.codexUntil = session.until;
         if (session !== mira || session.busy) {
           chunks = [];
           preroll = [];

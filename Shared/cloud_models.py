@@ -50,16 +50,45 @@ def complete(provider, messages):
         "messages": [{"role": m["role"], "content": m["content"]} for m in messages],
         "stream": False,
     }).encode()
+    data = request_json(base + "/chat/completions", key, body)
+    return chat_line(data["choices"][0]["message"]["content"])
+
+
+def ask_codex(question):
+    if not isinstance(question, str) or not 0 < len(question.strip()) <= 6000:
+        raise ValueError("Некорректная длина вопроса Кодексу.")
+    key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not key:
+        raise ValueError("Для Кодекса задайте OPENAI_API_KEY и перезапустите Миру.")
+    data = request_json("https://api.openai.com/v1/responses", key, json.dumps({
+        "model": os.environ.get("USB_AI_CODEX_MODEL") or "gpt-5.3-codex",
+        "input": question.strip(),
+        "instructions": "Ответь на языке пользователя ясно и кратко, с учётом голосового озвучивания.",
+        "store": False,
+    }).encode())
+    text = "\n".join(
+        part["text"] if part["type"] == "output_text" else part["refusal"]
+        for item in data.get("output", []) if item.get("type") == "message"
+        for part in item.get("content", []) if part.get("type") in ("output_text", "refusal")
+    )
+    if not text:
+        raise ValueError("Кодекс не вернул текстовый ответ.")
+    return chat_line(text)
+
+
+def request_json(url, key, body):
     req = urllib.request.Request(
-        base + "/chat/completions", data=body,
+        url, data=body,
         headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
     )
     with urllib.request.build_opener(NoRedirect()).open(req, timeout=90) as response:
         raw = response.read(4 * 1024 * 1024 + 1)
     if len(raw) > 4 * 1024 * 1024:
         raise ValueError("Cloud response too large")
-    data = json.loads(raw)
-    content = data["choices"][0]["message"]["content"]
+    return json.loads(raw)
+
+
+def chat_line(content):
     if not isinstance(content, str):
         raise ValueError("Cloud response did not contain text")
     return json.dumps({"message": {"content": content}, "done": True}).encode() + b"\n"

@@ -2574,8 +2574,8 @@
       }
 
       // ÔöÇÔöÇ Send / Stream to Ollama ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
-      async function sendMsg(text) {
-        if (!S.engineReady || !S.model) {
+      async function sendMsg(text, {codex = false} = {}) {
+        if (!codex && (!S.engineReady || !S.model)) {
           toast(S.models.length ? 'Select a model first' : 'No models installed');
           updateSend();
           return;
@@ -2603,7 +2603,7 @@
         }
 
         if (!conv.model) conv.model = S.model;
-        if (!conv.model) {
+        if (!codex && !conv.model) {
           toast('No model selected');
           updateSend();
           return;
@@ -2634,7 +2634,7 @@
           id: gid(),
           role: 'user',
           content: finalText,
-          displayContent: baseText,
+          displayContent: codex ? `Кодексу: ${baseText}` : baseText,
           ts: Date.now(),
         };
         if (imageAttachments.length) {
@@ -2668,10 +2668,11 @@
         updateTitle();
         scrollEnd();
 
-        await streamOllama(conv);
+        await streamOllama(conv, codex ? baseText : null);
       }
 
-      async function streamOllama(conv) {
+      async function streamOllama(conv, codexQuestion) {
+        const codex = codexQuestion !== null;
         const voice = window.personalVoice?.start();
         S.streaming = true;
         updateSend();
@@ -2681,7 +2682,8 @@
           role: 'assistant',
           content: '',
           pending: true,
-          status: 'Thinking',
+          status: codex ? 'Жду ответ Кодекса' : 'Thinking',
+          ...(codex ? {source: 'codex'} : {}),
           metrics: {
             outputTokens: 0,
             liveTokens: 0,
@@ -2699,8 +2701,8 @@
 
         const contentEl = getMsgContentEl(aiMsg.id);
         const statusTimers = [
-          setTimeout(() => updatePendingStatus(aiMsg, 'Warming up model'), 1800),
-          setTimeout(() => updatePendingStatus(aiMsg, 'Still working'), 7000),
+          setTimeout(() => updatePendingStatus(aiMsg, codex ? 'Жду ответ Кодекса' : 'Warming up model'), 1800),
+          setTimeout(() => updatePendingStatus(aiMsg, codex ? 'Кодекс ещё готовит ответ' : 'Still working'), 7000),
         ];
 
         S.abort = new AbortController();
@@ -2715,15 +2717,15 @@
 
         let liveRenderTimer = null;
         try {
-          const cloud = conv.model.startsWith('cloud/');
+          const cloud = !codex && conv.model.startsWith('cloud/');
           if (cloud && !window.confirm('Отправить историю этого чата выбранному облачному провайдеру?')) {
             throw new Error('Отправка в облако отменена');
           }
-          const endpoint = cloud ? '/api/cloud/chat' : OLLAMA + '/api/chat';
+          const endpoint = codex ? '/api/personal/codex' : cloud ? '/api/cloud/chat' : OLLAMA + '/api/chat';
           const res = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+            body: JSON.stringify(codex ? {question: codexQuestion} : {
               model: conv.model,
               messages: apiMsgs,
               stream: true,
@@ -2736,7 +2738,7 @@
             signal: S.abort.signal,
           });
           if (!res.ok) {
-            let errMsg = 'Ollama error ' + res.status;
+            let errMsg = (codex ? 'Ошибка Кодекса ' : 'Ollama error ') + res.status;
             try {
               const err = await res.json();
               if (err?.error) errMsg = err.error;
@@ -2771,7 +2773,7 @@
               liveRenderTimer = null;
             }
             lastLiveRender = now;
-            contentEl.innerHTML = renderStreamingMd(aiMsg.content);
+            contentEl.innerHTML = renderAnswer(aiMsg, true);
             scrollEnd();
           };
 
@@ -2827,7 +2829,7 @@
           aiMsg.metrics.done = true;
           updateMsgStats(aiMsg);
           if (contentEl) {
-            contentEl.innerHTML = renderMd(aiMsg.content);
+            contentEl.innerHTML = renderAnswer(aiMsg);
             contentEl.querySelectorAll('pre code').forEach((b) => {
               if (!b.classList.contains('hljs')) hljs.highlightElement(b);
             });
@@ -2847,7 +2849,7 @@
             aiMsg.metrics.done = true;
             updateMsgStats(aiMsg);
             if (aiMsg.content) {
-              if (contentEl) contentEl.innerHTML = renderMd(aiMsg.content);
+              if (contentEl) contentEl.innerHTML = renderAnswer(aiMsg);
             } else if (contentEl)
               contentEl.innerHTML =
                 '<span style="color:var(--t3);font-style:italic;">[Stopped]</span>';
@@ -2855,6 +2857,11 @@
             if (contentEl)
               contentEl.innerHTML = `<span style="color:var(--red);">ÔÜá ${esc(err.message)}</span>`;
             conv.msgs.pop();
+            if (codex) {
+              const errorVoice = window.personalVoice?.start();
+              errorVoice?.append(err.message);
+              errorVoice?.finish();
+            }
           }
         } finally {
           if (liveRenderTimer) clearTimeout(liveRenderTimer);
@@ -2983,13 +2990,16 @@
         return `<div class="mr usr"><div class="mc">${textBubble}${mediaEl}</div><div class="ma u">U</div></div>`;
       }
 
+      function renderAnswer(msg, streaming = false) {
+        if (msg.source === 'codex') return esc(msg.content).replace(/\n/g, '<br>');
+        return streaming ? renderStreamingMd(msg.content) : renderMd(msg.content);
+      }
+
       function renderAI(msg, isLast) {
         const isWaiting = S.streaming && isLast && !msg.content;
         const parsed = isWaiting
           ? renderThinking(msg.status || 'Thinking')
-          : S.streaming && isLast
-            ? renderStreamingMd(msg.content)
-            : renderMd(msg.content);
+          : renderAnswer(msg, S.streaming && isLast);
         const actions =
           !S.streaming || !isLast
             ? `
@@ -3026,7 +3036,7 @@
       function renderMsgStats(msg) {
         const m = msg.metrics;
         if (!m) return '';
-        const parts = [];
+        const parts = msg.source === 'codex' ? ['Кодекс · OpenAI'] : [];
         if (!m.done) {
           parts.push(`${formatRate(m.tokensPerSecond)} tok/s`);
         } else {

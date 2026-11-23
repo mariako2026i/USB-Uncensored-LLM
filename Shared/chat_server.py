@@ -475,27 +475,41 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
                 return False
         return True
 
-    def _cloud_response(self, chat=False):
+    def _cloud_response(self, chat=False, codex=False):
         status = 200
         content_type = "application/json"
         try:
-            configured = cloud_models.providers()
-            if chat:
+            if chat or codex:
                 size = int(self.headers.get("Content-Length", "0"))
                 if not 0 < size <= 2 * 1024 * 1024:
                     raise ValueError("Invalid request size")
                 data = json.loads(self.rfile.read(size))
-                result = cloud_models.complete(configured[data["model"]], data["messages"])
+                if codex:
+                    result = cloud_models.ask_codex(data["question"])
+                else:
+                    configured = cloud_models.providers()
+                    result = cloud_models.complete(configured[data["model"]], data["messages"])
                 content_type = "application/x-ndjson"
             else:
+                configured = cloud_models.providers()
                 result = json.dumps({"models": [{"name": name, "size": 0, "cloud": True}
                                                 for name in configured]}).encode()
         except urllib.error.HTTPError as error:
             status = 502
-            result = json.dumps({"error": f"Provider HTTP {error.code}"}).encode()
-        except (ValueError, LookupError, OSError, TypeError, AttributeError):
+            message = f"OpenAI вернул ошибку HTTP {error.code}." if codex else f"Provider HTTP {error.code}"
+            result = json.dumps({"error": message}).encode()
+        except ValueError as error:
             status = 502
-            result = b'{"error":"Check provider configuration, credentials and text-only input."}'
+            message = str(error) if codex and not isinstance(error, json.JSONDecodeError) else (
+                "Проверьте ключ и настройки OpenAI API." if codex else
+                "Check provider configuration, credentials and text-only input."
+            )
+            result = json.dumps({"error": message}).encode()
+        except (LookupError, OSError, TypeError, AttributeError):
+            status = 502
+            message = ("Не удалось получить ответ Кодекса. Проверьте подключение к OpenAI API."
+                       if codex else "Check provider configuration, credentials and text-only input.")
+            result = json.dumps({"error": message}).encode()
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(result)))
@@ -598,12 +612,12 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
 
-        if PERSONAL_MODE and path == "/api/cloud/chat":
+        if PERSONAL_MODE and path in ("/api/cloud/chat", "/api/personal/codex"):
             if (self.headers.get("Origin") != "http://" + self.headers["Host"]
                     or self.headers.get_content_type() != "application/json"):
                 self.send_error(403)
                 return
-            self._cloud_response(chat=True)
+            self._cloud_response(chat=path == "/api/cloud/chat", codex=path == "/api/personal/codex")
 
         elif PERSONAL_MODE and path == "/api/personal/speak":
             self._mira_speak()
