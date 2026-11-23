@@ -144,6 +144,180 @@ window.personalMode = true;
     return true;
   }
 
+  const miraButton = document.createElement('button');
+  miraButton.type = 'button';
+  miraButton.textContent = 'Мира';
+  miraButton.title = 'Ожидание имени «Мира»';
+  miraButton.style.cssText = 'padding:4px 8px;border:1px solid var(--t3);border-radius:8px;background:transparent;color:inherit';
+  miraButton.setAttribute('aria-pressed', 'false');
+  button.before(miraButton);
+  let mira = null;
+
+  function stopMira() {
+    const session = mira;
+    if (!session) return;
+    mira = null;
+    session.abort.abort();
+    session.processor?.disconnect();
+    session.stream?.getTracks().forEach((track) => track.stop());
+    session.context?.close().catch(() => {});
+    miraButton.setAttribute('aria-pressed', 'false');
+    miraButton.style.background = 'transparent';
+  }
+
+  function toWav(chunks) {
+    const samples = chunks.reduce((total, chunk) => total + chunk.length, 0);
+    const data = new DataView(new ArrayBuffer(44 + samples * 2));
+    function tag(offset, text) {
+      for (let i = 0; i < text.length; i++) data.setUint8(offset + i, text.charCodeAt(i));
+    }
+    tag(0, 'RIFF');
+    data.setUint32(4, 36 + samples * 2, true);
+    tag(8, 'WAVE');
+    tag(12, 'fmt ');
+    data.setUint32(16, 16, true);
+    data.setUint16(20, 1, true);
+    data.setUint16(22, 1, true);
+    data.setUint32(24, 16000, true);
+    data.setUint32(28, 32000, true);
+    data.setUint16(32, 2, true);
+    data.setUint16(34, 16, true);
+    tag(36, 'data');
+    data.setUint32(40, samples * 2, true);
+    let offset = 44;
+    for (const chunk of chunks) {
+      for (const sample of chunk) {
+        data.setInt16(offset, Math.max(-1, Math.min(1, sample)) * 32767, true);
+        offset += 2;
+      }
+    }
+    return data.buffer;
+  }
+
+  async function recognizeMira(session, chunks) {
+    session.busy = true;
+    try {
+      const response = await fetch('/api/personal/transcribe', {
+        method: 'POST', headers: {'Content-Type': 'audio/wav'},
+        body: toWav(chunks), signal: session.abort.signal,
+      });
+      const result = await response.json();
+      if (session !== mira) return;
+      if (!response.ok) throw new Error(result.error);
+      const text = result.text.trim();
+      const wake = /^мира(?=$|[\s,!.?—:;-])[\s,!.?—:;-]*/i.exec(text);
+      if (!wake && (!session.until || Date.now() >= session.until)) return;
+      const question = wake ? text.slice(wake[0].length) : text;
+      if (/^(стоп|закончи разговор)[.!?]*$/i.test(question)) {
+        session.until = 0;
+        say('Скажите «Мира», чтобы начать разговор.');
+        return;
+      }
+      session.until = Date.now() + 20000;
+      if (!question) {
+        say('Слушаю. Задайте вопрос.');
+        const acknowledgement = window.personalVoice?.start();
+        acknowledgement?.append('Слушаю.');
+        acknowledgement?.finish();
+        return;
+      }
+      if (await run(question)) return;
+      if (session !== mira) return;
+      if (!S.engineReady || !S.model) {
+        say('Выберите модель в чате.');
+        return;
+      }
+      if (S.streaming || input.value.trim() || S.attachments.length) {
+        say('Завершите текущий ответ или очистите черновик и повторите вопрос.');
+        return;
+      }
+      say('Мира отвечает…');
+      await sendMsg(question);
+      if (session === mira) {
+        session.until = Date.now() + 20000;
+        say('Задайте следующий вопрос или скажите «Мира, стоп».');
+      }
+    } catch (error) {
+      if (session !== mira) return;
+      stopMira();
+      say(error.message || 'Не удалось распознать речь.');
+    } finally {
+      session.busy = false;
+    }
+  }
+
+  miraButton.addEventListener('click', async () => {
+    if (mira) {
+      stopMira();
+      say('Ожидание имени выключено.');
+      return;
+    }
+    const session = {abort: new AbortController(), until: 0, busy: false};
+    mira = session;
+    miraButton.setAttribute('aria-pressed', 'true');
+    miraButton.style.background = 'var(--grad1)';
+    let chunks = [];
+    let preroll = [];
+    let voiced = 0;
+    let silence = 0;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true},
+      });
+      if (session !== mira) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      session.stream = stream;
+      const context = new AudioContext({sampleRate: 16000});
+      session.context = context;
+      await context.resume();
+      if (session !== mira) return;
+      if (context.sampleRate !== 16000) throw new Error('Браузер не поддерживает частоту 16 кГц.');
+      const processor = context.createScriptProcessor(2048, 1, 1);
+      session.processor = processor;
+      processor.onaudioprocess = (event) => {
+        const playing = window.speechSynthesis?.speaking || window.speechSynthesis?.pending;
+        if (session !== mira || session.busy || S.streaming || playing) {
+          if (playing && session.until) session.until = Date.now() + 20000;
+          chunks = [];
+          preroll = [];
+          voiced = silence = 0;
+          return;
+        }
+        const samples = event.inputBuffer.getChannelData(0);
+        let energy = 0;
+        for (const sample of samples) energy += sample * sample;
+        const speaking = Math.sqrt(energy / samples.length) >= 0.012;
+        if (!chunks.length && !speaking) {
+          preroll.push(samples.slice());
+          if (preroll.length > 2) preroll.shift();
+          return;
+        }
+        if (!chunks.length) {
+          chunks = preroll;
+          preroll = [];
+        }
+        chunks.push(samples.slice());
+        if (speaking) voiced++;
+        silence = speaking ? 0 : silence + 1;
+        if (silence >= 6 || chunks.length >= 90) {
+          if (voiced >= 2) recognizeMira(session, chunks);
+          chunks = [];
+          voiced = silence = 0;
+        }
+      };
+      context.createMediaStreamSource(stream).connect(processor);
+      processor.connect(context.destination);
+      say('Скажите «Мира» или «Мира, привет».');
+    } catch (error) {
+      if (session !== mira) return;
+      stopMira();
+      say('Не удалось включить микрофон: ' + error.message);
+    }
+  });
+  window.addEventListener('pagehide', stopMira);
+
   button.hidden = false;
   button.addEventListener('click', async () => {
     const text = window.prompt('Команда:\n' + Array.from(commands.keys()).join('\n'));
@@ -172,6 +346,7 @@ window.personalMode = true;
   };
   mic.addEventListener('click', () => {
     try {
+      stopMira();
       window.personalVoice?.stop();
       speech.start();
     } catch {

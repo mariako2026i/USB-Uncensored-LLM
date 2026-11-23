@@ -50,6 +50,8 @@ if PERSONAL_MODE:
     sys.path.insert(0, SCRIPT_DIR)
     import cloud_models
     import personal_actions
+    import personal_whisper
+    import subprocess
 CHATS_DIR = os.path.join(SCRIPT_DIR, "chat_data")
 CHATS_FILE = os.path.join(CHATS_DIR, "chats.json")
 SETTINGS_FILE = os.path.join(CHATS_DIR, "settings.json")
@@ -536,6 +538,32 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
             # Try serving static files from SCRIPT_DIR
             self._serve_static(path)
 
+    def _mira_transcribe(self):
+        if (self.headers.get("Origin") != "http://" + self.headers["Host"]
+                or self.headers.get_content_type() != "audio/wav"):
+            self.send_error(403)
+            return
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 44 <= size <= personal_whisper.MAX_BYTES:
+                raise ValueError("Некорректный размер записи.")
+            text = personal_whisper.transcribe(self.rfile.read(size))
+            result, status = {"text": text}, 200
+        except ValueError as error:
+            result, status = {"error": str(error)}, 400
+        except subprocess.SubprocessError:
+            result, status = {"error": "Whisper не смог распознать запись. Проверьте установку Миры."}, 503
+        except OSError:
+            message = ("Не удалось обработать запись на этом ПК." if personal_whisper.ready()
+                       else "Сначала запустите Windows\\install-mira.bat.")
+            result, status = {"error": message}, 503
+        body = json.dumps(result).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_POST(self):
         path = urlparse(self.path).path
 
@@ -545,6 +573,9 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
                 self.send_error(403)
                 return
             self._cloud_response(chat=True)
+
+        elif PERSONAL_MODE and path == "/api/personal/transcribe":
+            self._mira_transcribe()
 
         elif PERSONAL_MODE and path == "/api/personal/action":
             if (self.headers.get("Origin") != "http://" + self.headers["Host"]
