@@ -251,7 +251,11 @@ window.personalMode = true;
     return data.buffer;
   }
 
-  async function recognizeMira(session, chunks) {
+  function replyInProgress() {
+    return S.streaming || window.personalVoice?.playing() || window.speechSynthesis?.speaking;
+  }
+
+  async function recognizeMira(session, chunks, interruptOnly) {
     session.busy = true;
     try {
       const response = await fetch('/api/personal/transcribe', {
@@ -263,6 +267,14 @@ window.personalMode = true;
       if (!response.ok) throw new Error(result.error);
       const text = result.text.trim();
       const wake = /^мира(?=$|[\s,!.?—:;-])[\s,!.?—:;-]*/i.exec(text);
+      if (wake && /^стоп[.!?…]*$/i.test(text.slice(wake[0].length))) {
+        session.reply = null;
+        stopStream();
+        session.until = Date.now() + 20000;
+        say('Остановлено. Скажите исправленный вопрос.');
+        return;
+      }
+      if (interruptOnly || replyInProgress()) return;
       if (!wake && (!session.until || Date.now() >= session.until)) return;
       const question = wake ? text.slice(wake[0].length) : text;
       if (/^(стоп|закончи разговор)[.!?]*$/i.test(question)) {
@@ -289,11 +301,19 @@ window.personalMode = true;
         return;
       }
       say('Мира отвечает…');
-      await sendMsg(question);
-      if (session === mira) {
+      const reply = sendMsg(question);
+      session.reply = reply;
+      reply.then(() => {
+        if (session !== mira || session.reply !== reply) return;
+        session.reply = null;
         session.until = Date.now() + 20000;
         say('Задайте следующий вопрос или скажите «Мира, стоп».');
-      }
+      }).catch(() => {
+        if (session === mira && session.reply === reply) {
+          session.reply = null;
+          say('Не удалось получить ответ. Повторите вопрос.');
+        }
+      });
     } catch (error) {
       if (session !== mira) return;
       stopMira();
@@ -317,6 +337,7 @@ window.personalMode = true;
     let preroll = [];
     let voiced = 0;
     let silence = 0;
+    let interruptOnly = false;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true},
@@ -334,12 +355,13 @@ window.personalMode = true;
       const processor = context.createScriptProcessor(2048, 1, 1);
       session.processor = processor;
       processor.onaudioprocess = (event) => {
-        const playing = window.personalVoice?.playing() || window.speechSynthesis?.speaking;
-        if (session !== mira || session.busy || S.streaming || playing) {
-          if (playing && session.until) session.until = Date.now() + 20000;
+        const replying = replyInProgress();
+        if (replying && session.until) session.until = Date.now() + 20000;
+        if (session !== mira || session.busy) {
           chunks = [];
           preroll = [];
           voiced = silence = 0;
+          interruptOnly = false;
           return;
         }
         const samples = event.inputBuffer.getChannelData(0);
@@ -355,13 +377,15 @@ window.personalMode = true;
           chunks = preroll;
           preroll = [];
         }
+        interruptOnly ||= replying;
         chunks.push(samples.slice());
         if (speaking) voiced++;
         silence = speaking ? 0 : silence + 1;
         if (silence >= 6 || chunks.length >= 90) {
-          if (voiced >= 2) recognizeMira(session, chunks);
+          if (voiced >= 2) recognizeMira(session, chunks, interruptOnly);
           chunks = [];
           voiced = silence = 0;
+          interruptOnly = false;
         }
       };
       context.createMediaStreamSource(stream).connect(processor);
