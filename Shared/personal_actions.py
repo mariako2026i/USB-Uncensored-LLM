@@ -21,13 +21,17 @@ LOCAL_COMMANDS = {"get-location": "Get-Location", "get-date": "Get-Date",
 REMOTE_COMMANDS = {"pwd", "uptime", "df -h", "free -h", "whoami", "ls"}
 
 
+def project_directory():
+    return str(Path(os.environ.get("USB_AI_PROJECT") or os.environ.get("USB_AI_CRM_PROJECT")
+                    or Path.home()).resolve(strict=True))
+
+
 def execute(action, argument=None):
     if os.name != "nt":
         return {"output": "Команда доступна в Windows."}
     windows = Path(os.environ["SystemRoot"]) / "System32"
     settings = os.environ
-    project = Path(settings.get("USB_AI_PROJECT") or settings.get("USB_AI_CRM_PROJECT")
-                   or Path.home()).resolve(strict=True)
+    project = Path(project_directory())
     if not project.is_dir():
         raise ValueError("Project must be a directory")
     clean_env = {key: value for key, value in os.environ.items()

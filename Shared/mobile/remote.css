@@ -1,0 +1,38 @@
+:root {
+  color-scheme: dark;
+  font: 16px/1.5 system-ui, sans-serif;
+  background: #191824;
+  color: #f6f2ff;
+}
+body { margin: 0; }
+main {
+  max-width: 36rem;
+  margin: auto;
+  padding: max(1rem, env(safe-area-inset-top)) 1rem max(1rem, env(safe-area-inset-bottom));
+}
+header, .controls { display: flex; gap: .75rem; align-items: center; }
+header img { border-radius: .75rem; }
+h1 { margin: 0; font-size: 1.6rem; }
+h2 { margin: 1.3rem 0 .65rem; font-size: 1.25rem; }
+header button { margin-left: auto; }
+form { display: grid; gap: .6rem; }
+input, textarea, button { font: inherit; }
+input, textarea {
+  border: 1px solid #6b6284; border-radius: .65rem; background: #242235;
+  color: inherit; min-width: 0; padding: .7rem;
+}
+button {
+  min-height: 44px; padding: .45rem .85rem; border-radius: .65rem;
+  border: 1px solid #8e7ab3; background: #c8a7ff; color: #201234; font-weight: 600;
+}
+button[aria-pressed="true"] { background: #f5adba; }
+button:disabled { opacity: .6; }
+#messages { max-height: 56dvh; overflow: auto; padding: 1rem 0; }
+#messages article {
+  padding: .65rem .8rem; margin: .45rem 0; border-radius: .65rem;
+  background: #2a263f;
+}
+#messages .user { margin-left: 12%; background: #42345e; }
+#messages p { margin: .25rem 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+#messages button { margin-top: .5rem; }
+#status { min-height: 1.5rem; color: #e0cafd; }

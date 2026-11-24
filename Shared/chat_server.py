@@ -1094,6 +1094,14 @@ def main():
 
     server = ThreadedHTTPServer(("127.0.0.1" if PERSONAL_MODE else "0.0.0.0", CHAT_SERVER_PORT), ChatHandler)
 
+    mobile_server = None
+    if PERSONAL_MODE and os.environ.get("USB_AI_MOBILE") == "1":
+        import personal_mobile
+        try:
+            mobile_server = personal_mobile.start(OLLAMA_HOST)
+        except OSError as error:
+            print(f"  Mira Android could not start: {error}")
+
     # Open browser in background thread
     if "--no-browser" not in sys.argv:
         threading.Thread(target=open_browser_delayed, daemon=True).start()
@@ -1102,9 +1110,12 @@ def main():
         server.serve_forever()
     except KeyboardInterrupt:
         print("\n  Shutting down chat server...")
-        server.shutdown()
         print("  Goodbye!")
     finally:
+        if mobile_server:
+            mobile_server.shutdown()
+            mobile_server.server_close()
+        server.server_close()
         try:
             LOG_LISTENER.stop()
         except Exception:
