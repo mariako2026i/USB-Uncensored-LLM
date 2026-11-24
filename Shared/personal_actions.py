@@ -80,11 +80,17 @@ def execute(action, argument=None):
         return {"output": "Автозапуск деплоя выключен: скрипт может удалять файлы. Откройте консоль сервера."}
 
     if action in ("ssh", "ssh-command"):
-        alias = settings.get("USB_AI_SSH_ALIAS", "")
+        profile = Path.home() / ".ssh" / "mira-firstvds.conf"
+        alias = settings.get("USB_AI_SSH_ALIAS") or ("firstvds" if profile.is_file() else "")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", alias):
-            return {"output": "Укажите SSH-профиль в USB_AI_SSH_ALIAS."}
-        command = [str(windows / "OpenSSH" / "ssh.exe"), "-o", "BatchMode=yes",
-                   "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10", "--", alias]
+            return {"output": "Запустите Windows\\setup-firstvds.bat или укажите SSH-профиль в USB_AI_SSH_ALIAS."}
+        command = [str(windows / "OpenSSH" / "ssh.exe")]
+        if alias == "firstvds" and profile.is_file() and action == "ssh-command":
+            command.extend(["-F", str(profile)])
+        elif not settings.get("USB_AI_SSH_ALIAS") and action == "ssh":
+            return {"output": "Ключ Миры предназначен для диагностики. Для интерактивного входа используйте обычный SSH."}
+        command.extend(["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o",
+                        "ConnectTimeout=10", "--", alias])
         if action == "ssh-command":
             text = command_text(argument, multiline=False)
             if text not in REMOTE_COMMANDS:
