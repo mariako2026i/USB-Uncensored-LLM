@@ -12,7 +12,21 @@ window.parseMiraCodex = (text) => {
     ['открой проект', 'project'],
     ['открой консоль', 'console'],
     ['покажи статус проекта', 'status'],
-    ['разверни проект', 'deploy'],
+    ['открой github', 'github'],
+    ['открой гитхаб', 'github'],
+    ['покажи задачи github', 'github-issues'],
+    ['покажи задачи гитхаб', 'github-issues'],
+    ['открой firstvds', 'ssh'],
+    ['открой first vds', 'ssh'],
+    ['открой консоль сервера', 'ssh'],
+    ['открой youtube', 'youtube'],
+    ['открой ютуб', 'youtube'],
+    ['открой crm', 'crm'],
+    ['открой црм', 'crm'],
+    ['открой почту', 'mail'],
+    ['открой gmail', 'gmail'],
+    ['открой outlook', 'outlook'],
+    ['открой яндекс почту', 'yandex-mail'],
   ]);
   const mic = document.getElementById('personal-mic');
   const button = document.getElementById('personal-command');
@@ -188,24 +202,83 @@ window.parseMiraCodex = (text) => {
     });
   }
 
-  async function run(text) {
-    const phrase = text.trim().toLowerCase().replace(/[.!?]+$/, '');
-    const action = commands.get(phrase);
-    if (!action) return false;
-    if (!window.confirm('Выполнить команду «' + phrase + '»?')) return true;
+  let githubIssue = '';
+  let pendingDelete = null;
+
+  async function runAction(action, argument) {
     say('Выполняется…');
+    if (!['confirm-delete', 'cancel-delete', 'prepare-delete'].includes(action)) pendingDelete = null;
     try {
       const response = await fetch('/api/personal/action', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({action}),
+        body: JSON.stringify({action, argument}),
       });
       const data = await response.json();
+      if (action === 'prepare-delete') {
+        pendingDelete = data.delete_token ? {token: data.delete_token, expires: Date.now() + 30000} : null;
+      }
+      if (action === 'github-issue') githubIssue = data.exit_code === 0 ? data.output : '';
       say(data.exit_code === undefined ? data.output : 'Код выхода ' + data.exit_code + '\n' + data.output);
     } catch {
       say('Не удалось получить результат команды.');
     }
-    return true;
+  }
+
+  window.parseMiraTerminal = (text) => /^(\/(?:ps|ssh))(?=$|\s)[\t ]*([\s\S]*)$/i.exec(text.trim());
+  window.runMiraTerminal = async (match) => {
+    const argument = match[2].trim();
+    if (!argument) {
+      say('Укажите точную команду после /ps или /ssh.');
+      return;
+    }
+    await runAction(match[1].toLowerCase() === '/ps' ? 'powershell' : 'ssh-command', argument);
+  };
+
+  async function run(text) {
+    const phrase = text.trim().toLowerCase().replace(/[.!?]+$/, '');
+    const action = commands.get(phrase);
+    if (action) {
+      if (window.confirm('Выполнить «' + phrase + '»?')) await runAction(action);
+      return true;
+    }
+
+    const removal = /^(?:подготовь удаление файла|удали файл)\s+(.+)$/is.exec(text.trim());
+    if (removal) {
+      pendingDelete = null;
+      await runAction('prepare-delete', removal[1]);
+      return true;
+    }
+
+    const site = /^открой\s+сайт\s+(.+)$/i.exec(text.trim());
+    const issue = /^покажи\s+(?:задачу|ишью)(?:\s+номер)?\s+(\d+)$/.exec(phrase);
+    if (site) {
+      let address = site[1].trim().replace(/\s+точка\s+/gi, '.');
+      if (!/^https?:\/\//i.test(address)) address = 'https://' + address;
+      if (window.confirm('Открыть ' + address + '?')) await runAction('website', address);
+      return true;
+    }
+    if (issue) {
+      await runAction('github-issue', issue[1]);
+      return true;
+    }
+
+    const fromBlock = /^(?:подготовь|выполни) команду (?:из (ответа|задачи) )?(?:для|в) (powershell|пауэршелл|консоли|firstvds|first vds|на сервере)$/.exec(phrase);
+    if (fromBlock) {
+      const local = /^(?:powershell|пауэршелл|консоли)$/.test(fromBlock[2]);
+      const reply = fromBlock[1] === 'задачи' ? githubIssue :
+        getConv()?.msgs.findLast((msg) => msg.role === 'assistant' && msg.content)?.content || '';
+      const blocks = [...reply.matchAll(/^```([\w-]*)[ \t]*\r?\n([\s\S]*?)^```[ \t]*$/gm)];
+      const language = local ? /^(?:powershell|pwsh|ps1)$/i : /^(?:bash|sh|shell)$/i;
+      const matching = blocks.filter((block) => language.test(block[1]));
+      if (matching.length !== 1) {
+        say('Нужен ровно один блок команды ' + (local ? 'PowerShell' : 'Bash') + ' в выбранном источнике.');
+        return true;
+      }
+      await runAction(local ? 'powershell' : 'ssh-command', matching[0][2].trim());
+      return true;
+    }
+    return false;
   }
 
   const miraButton = document.createElement('button');
@@ -227,6 +300,7 @@ window.parseMiraCodex = (text) => {
     if (!session) return;
     mira = null;
     setCodexMode(session, false);
+    pendingDelete = null;
     session.abort.abort();
     session.processor?.disconnect();
     session.stream?.getTracks().forEach((track) => track.stop());
@@ -284,13 +358,23 @@ window.parseMiraCodex = (text) => {
       const stop = /^(?:мира|нира|мера)[\s,!.?—:;-]+(?:стоп|стой|столб)[.!?…]*$/i.test(text);
       if (stop && (wake || interruptOnly || replyInProgress())) {
         session.reply = null;
+        pendingDelete = null;
         stopStream();
         session.until = Date.now() + 20000;
         say('Остановлено. Скажите исправленный вопрос.');
         return;
       }
       if (interruptOnly || replyInProgress()) return;
+      const decision = /^(да|нет)[.!?…]*$/i.exec(wake ? text.slice(wake[0].length) : text);
+      if (pendingDelete && decision) {
+        const pending = pendingDelete;
+        pendingDelete = null;
+        const approve = decision[1].toLowerCase() === 'да' && Date.now() < pending.expires;
+        await runAction(approve ? 'confirm-delete' : 'cancel-delete', pending.token);
+        return;
+      }
       if (!wake && (!session.until || Date.now() >= session.until)) return;
+      pendingDelete = null;
       let question = wake ? text.slice(wake[0].length) : text;
       if (/^(стоп|закончи разговор)[.!?]*$/i.test(question)) {
         session.until = 0;
@@ -324,7 +408,7 @@ window.parseMiraCodex = (text) => {
         }
       }
       const codex = session.codexMode;
-      if (!codex && await run(question)) return;
+      if (codexQuestion === null && (!codex || wake) && await run(question)) return;
       if (session !== mira) return;
       if (!codex && (!S.engineReady || !S.model)) {
         say('Выберите модель в чате.');
@@ -438,7 +522,8 @@ window.parseMiraCodex = (text) => {
 
   button.hidden = false;
   button.addEventListener('click', async () => {
-    const text = window.prompt('Команда:\n' + Array.from(commands.keys()).join('\n'));
+    const text = window.prompt('Команда:\n' + Array.from(commands.keys()).join('\n') +
+      '\nоткрой сайт example.com\nпокажи задачу 12\nподготовь команду из ответа для PowerShell\nподготовь удаление файла имя.txt');
     if (text && !(await run(text))) say('Команда не найдена.');
   });
   mic.hidden = false;

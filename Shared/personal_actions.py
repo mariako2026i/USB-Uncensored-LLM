@@ -1,22 +1,33 @@
-"""Run only actions defined in the Windows companion."""
+"""Run user-requested actions in the Windows companion."""
 
+import base64
 import ctypes
 import os
 from pathlib import Path
 import re
 import subprocess
 import tempfile
+from urllib.parse import urlsplit
+import webbrowser
 import threading
+import time
+import uuid
 
 LOCK = threading.Lock()
+DELETE_LOCK = threading.Lock()
+PENDING_DELETE = None
+LOCAL_COMMANDS = {"get-location": "Get-Location", "get-date": "Get-Date",
+                  "get-childitem": "Get-ChildItem", "git status": "git --no-optional-locks -c core.fsmonitor=false status"}
+REMOTE_COMMANDS = {"pwd", "uptime", "df -h", "free -h", "whoami", "ls"}
 
 
-def execute(action):
+def execute(action, argument=None):
     if os.name != "nt":
         return {"output": "Команда доступна в Windows."}
     windows = Path(os.environ["SystemRoot"]) / "System32"
     settings = os.environ
-    project = Path(settings.get("USB_AI_PROJECT", str(Path.home()))).resolve(strict=True)
+    project = Path(settings.get("USB_AI_PROJECT") or settings.get("USB_AI_CRM_PROJECT")
+                   or Path.home()).resolve(strict=True)
     if not project.is_dir():
         raise ValueError("Project must be a directory")
     clean_env = {key: value for key, value in os.environ.items()
@@ -27,30 +38,77 @@ def execute(action):
                    "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
                    "Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version; "
                    "Get-CimInstance Win32_Processor | Select-Object Name"],
-        "status": ["git.exe", "status", "--short", "--branch"],
+        "status": ["git.exe", "--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--short", "--branch"],
         "console": [str(powershell), "-NoProfile", "-NoExit"],
         "project": [str(windows.parent / "explorer.exe"), str(project)],
     }
+    repo = settings.get("USB_AI_GITHUB_REPO", "mariako2026i/mariako_crm")
+    if action in ("youtube", "github", "crm", "website", "mail", "gmail", "outlook", "yandex-mail"):
+        if action == "github" and not valid_repo(repo):
+            raise ValueError("Invalid GitHub repository")
+        if action == "mail" and not settings.get("USB_AI_MAIL_URL"):
+            return {"output": "Скажите «открой Gmail», «открой Outlook» или «открой Яндекс Почту»."}
+        links = {
+            "youtube": "https://www.youtube.com/",
+            "github": "https://github.com/" + repo,
+            "crm": settings.get("USB_AI_CRM_URL") or "http://localhost:3000/",
+            "website": argument,
+            "mail": settings.get("USB_AI_MAIL_URL"),
+            "gmail": "https://mail.google.com/",
+            "outlook": "https://outlook.live.com/mail/",
+            "yandex-mail": "https://mail.yandex.ru/",
+        }
+        url = browser_url(links[action])
+        if not webbrowser.open(url, new=2):
+            raise OSError("Browser could not be opened")
+        return {"output": f"Открыто в браузере: {url}"}
+
+    if action in {"prepare-delete", "confirm-delete", "cancel-delete"}:
+        if not (settings.get("USB_AI_PROJECT") or settings.get("USB_AI_CRM_PROJECT")):
+            return {"output": "Сначала выберите папку проекта."}
+        return deletion(action, project, argument)
+
     if action == "deploy":
+        return {"output": "Автозапуск деплоя выключен: скрипт может удалять файлы. Откройте консоль сервера."}
+
+    if action in ("ssh", "ssh-command"):
         alias = settings.get("USB_AI_SSH_ALIAS", "")
-        script = settings.get("USB_AI_REMOTE_SCRIPT", "")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", alias):
             return {"output": "Укажите SSH-профиль в USB_AI_SSH_ALIAS."}
-        if not re.fullmatch(r"/[A-Za-z0-9_./-]+", script):
-            return {"output": "Укажите путь к скрипту на VPS в USB_AI_REMOTE_SCRIPT."}
-        prompt = f"Выполнить на {alias}?\n\n{script}"
-        if ctypes.windll.user32.MessageBoxW(None, prompt, "FirstVDS", 0x124) != 6:
-            return {"output": "Деплой отменён."}
         command = [str(windows / "OpenSSH" / "ssh.exe"), "-o", "BatchMode=yes",
-                   "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10",
-                   "--", alias, "/bin/bash", script]
+                   "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10", "--", alias]
+        if action == "ssh-command":
+            text = command_text(argument, multiline=False)
+            if text not in REMOTE_COMMANDS:
+                return {"output": "В голосовом режиме доступны только команды SSH: " + ", ".join(sorted(REMOTE_COMMANDS))}
+            if not confirmed(f"FirstVDS: {alias}", text):
+                return {"output": "Команда отменена."}
+            command.append(text)
+    elif action == "powershell":
+        text = command_text(argument)
+        executable = LOCAL_COMMANDS.get(text.lower())
+        if not executable:
+            return {"output": "В голосовом режиме доступны только команды PowerShell: " + ", ".join(LOCAL_COMMANDS)}
+        if not confirmed(f"PowerShell: {project}", text):
+            return {"output": "Команда отменена."}
+        script = "[Console]::OutputEncoding = [Text.Encoding]::UTF8\n" + executable
+        encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+        command = [str(powershell), "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded]
+    elif action == "github-issues":
+        if not valid_repo(repo):
+            raise ValueError("Invalid GitHub repository")
+        command = ["gh.exe", "issue", "list", "--repo", repo, "--limit", "15"]
+    elif action == "github-issue":
+        if not valid_repo(repo) or not re.fullmatch(r"[1-9][0-9]{0,8}", argument or ""):
+            raise ValueError("Invalid GitHub issue")
+        command = ["gh.exe", "issue", "view", argument, "--repo", repo, "--json", "body", "--jq", ".body"]
     else:
         command = commands[action]
 
-    if action in {"console", "project"}:
-        flags = subprocess.CREATE_NEW_CONSOLE if action == "console" else 0
+    if action in {"console", "project", "ssh"}:
+        flags = subprocess.CREATE_NEW_CONSOLE if action in {"console", "ssh"} else 0
         subprocess.Popen(command, cwd=project, env=clean_env, creationflags=flags)
-        return {"output": "Окно открыто."}
+        return {"output": "Открыто окно SSH." if action == "ssh" else "Окно открыто."}
 
     if not LOCK.acquire(blocking=False):
         return {"output": "Другая команда ещё выполняется."}
@@ -60,7 +118,7 @@ def execute(action):
                 result = subprocess.run(command, cwd=project, env=clean_env, stdin=subprocess.DEVNULL,
                                         stdout=output, stderr=subprocess.STDOUT, timeout=180)
             except subprocess.TimeoutExpired:
-                return {"output": "Истекло время ожидания. Для деплоя проверьте состояние на VPS."}
+                return {"output": "Истекло время ожидания. Для команды SSH или деплоя проверьте её состояние на VPS."}
             output.seek(0)
             raw = output.read(32769)
             message = raw[:32768].decode("utf-8", errors="replace")
@@ -69,3 +127,90 @@ def execute(action):
             return {"output": message or "Команда завершилась без вывода.", "exit_code": result.returncode}
     finally:
         LOCK.release()
+
+
+
+def valid_repo(repo):
+    return bool(re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9_.-]+", repo))
+
+
+def browser_url(value):
+    if not isinstance(value, str) or not value or re.search(r"[\s\\\x00-\x1f\x7f]", value):
+        raise ValueError("Invalid URL")
+    url = urlsplit(value)
+    if url.username or url.password or not url.hostname:
+        raise ValueError("Invalid URL")
+    if url.scheme != "https" and not (
+        url.scheme == "http" and url.hostname in {"localhost", "127.0.0.1", "::1"}
+    ):
+        raise ValueError("Only HTTPS and local HTTP URLs are accepted")
+    return value
+
+
+def command_text(value, multiline=True):
+    if not isinstance(value, str) or not 0 < len(value.strip()) <= 1800:
+        raise ValueError("Invalid command length")
+    text = value.strip()
+    for character in text:
+        if ord(character) < 32 and (not multiline or character not in "\r\n\t"):
+            raise ValueError("Invalid command character")
+        if character in "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069":
+            raise ValueError("Invalid command direction control")
+    return text
+
+
+def confirmed(title, text):
+    message = f"Выполнить эту команду?\n\n{text}"
+    return ctypes.windll.user32.MessageBoxW(None, message, title, 0x10124) == 6
+
+
+
+def project_file(project, argument):
+    if (not isinstance(argument, str) or not argument.strip()
+            or any(ord(char) < 32 or "\u202a" <= char <= "\u202e" or "\u2066" <= char <= "\u2069"
+                   for char in argument)):
+        raise ValueError("Missing filename")
+    relative = Path(argument.strip().strip('"'))
+    if relative.anchor or any(part.casefold() in {"..", ".mira-trash", ".git"} or ":" in part
+                              for part in relative.parts):
+        raise ValueError("Use a relative path inside the project")
+    lexical = project / relative
+    target = lexical.resolve(strict=True)
+    if lexical != target or not target.is_relative_to(project) or not target.is_file():
+        raise ValueError("Use a regular file inside the project")
+    return target
+
+
+def file_identity(target):
+    stat = target.stat()
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
+
+def deletion(action, project, argument):
+    global PENDING_DELETE
+    with DELETE_LOCK:
+        if action == "prepare-delete":
+            PENDING_DELETE = None
+            target = project_file(project, argument)
+            token = uuid.uuid4().hex
+            PENDING_DELETE = (project, target, file_identity(target), token, time.monotonic() + 30)
+            return {"output": f"Переместить в карантин файл {target}? Скажите «да» или «нет».",
+                    "delete_token": token}
+        if not PENDING_DELETE or argument != PENDING_DELETE[3]:
+            return {"output": "Запрос на удаление отсутствует или уже обработан."}
+        root, target, identity, token, deadline = PENDING_DELETE
+        PENDING_DELETE = None
+        if action == "cancel-delete" or time.monotonic() > deadline:
+            return {"output": "Удаление отменено."}
+        if root != project or project_file(project, str(target.relative_to(root))) != target:
+            raise ValueError("File path changed after confirmation")
+        if file_identity(target) != identity:
+            return {"output": "Файл изменился. Запросите новое подтверждение."}
+        trash = root / ".mira-trash"
+        trash.mkdir(exist_ok=True)
+        if trash.resolve(strict=True) != trash:
+            raise ValueError("Unsafe quarantine folder")
+        destination = trash / token
+        destination.mkdir()
+        target.rename(destination / target.name)
+        return {"output": f"Файл перемещён в карантин: {destination / target.name}"}

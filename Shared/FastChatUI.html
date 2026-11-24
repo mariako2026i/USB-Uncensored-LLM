@@ -2575,6 +2575,15 @@
 
       // ÔöÇÔöÇ Send / Stream to Ollama ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
       async function sendMsg(text, {codex = false} = {}) {
+        const terminal = !codex && window.parseMiraTerminal?.(text);
+        if (terminal) {
+          if (S.streaming) return;
+          await window.runMiraTerminal(terminal);
+          D.inp.value = '';
+          autoResize();
+          updateSend();
+          return;
+        }
         const codexQuestion = codex ? null : window.parseMiraCodex?.(text);
         if (codexQuestion != null) {
           text = codexQuestion;
@@ -3135,9 +3144,10 @@
       function updateSend() {
         const has = D.inp.value.trim().length > 0 || S.attachments.length > 0;
         const codexQuestion = window.parseMiraCodex?.(D.inp.value);
-        const canSend = codexQuestion != null
+        const terminal = window.parseMiraTerminal?.(D.inp.value);
+        const canSend = !!terminal || (codexQuestion != null
           ? !!codexQuestion && !S.attachments.length
-          : has && S.engineReady && !!S.model;
+          : has && S.engineReady && !!S.model);
         D.iw.classList.toggle('ht', has);
         if (S.streaming) {
           D.send.className = 'ib2 stbtn';
@@ -3311,6 +3321,6 @@
       // ÔöÇÔöÇ Start ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
       init();
     </script>
-    <script src="/personal.js?v=mira-codex-mode"></script>
+    <script src="/personal.js?v=mira-workspace-actions"></script>
   </body>
 </html>

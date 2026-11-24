@@ -632,13 +632,13 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
                 return
             try:
                 size = int(self.headers.get("Content-Length", "0"))
-                if not 0 < size <= 1024:
+                if not 0 < size <= 16384:
                     raise ValueError()
-                action = json.loads(self.rfile.read(size))["action"]
-                result = personal_actions.execute(action)
+                payload = json.loads(self.rfile.read(size))
+                result = personal_actions.execute(payload["action"], payload.get("argument"))
                 status = 200
-            except (ValueError, LookupError, TypeError):
-                result, status = {"output": "Неизвестная команда."}, 400
+            except (ValueError, LookupError, TypeError, AttributeError):
+                result, status = {"output": "Неизвестная команда или недопустимые параметры."}, 400
             except OSError:
                 result, status = {"output": "Не удалось запустить команду. Проверьте настройки."}, 500
             body = json.dumps(result).encode()
