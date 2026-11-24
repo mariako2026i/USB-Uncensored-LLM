@@ -1,6 +1,7 @@
 """Run user-requested actions in the Windows companion."""
 
 import base64
+from io import BytesIO
 import ctypes
 import json
 import os
@@ -9,6 +10,8 @@ import re
 import subprocess
 import tempfile
 from urllib.parse import urlsplit
+from urllib.request import urlopen
+from zipfile import is_zipfile
 import webbrowser
 import threading
 import time
@@ -31,6 +34,31 @@ REMOTE_COMMANDS = {
 }
 
 
+MIRA_ARCHIVE_URL = "https://codeload.github.com/mariako2026i/USB-Uncensored-LLM/zip/refs/heads/main"
+MIRA_ARCHIVE_LIMIT = 32 * 1024 * 1024
+
+
+def download_mira():
+    if not LOCK.acquire(blocking=False):
+        return {"output": "Другая команда ещё выполняется."}
+    try:
+        try:
+            with urlopen(MIRA_ARCHIVE_URL, timeout=20) as response:
+                archive = response.read(MIRA_ARCHIVE_LIMIT + 1)
+            if len(archive) > MIRA_ARCHIVE_LIMIT or not is_zipfile(BytesIO(archive)):
+                return {"output": "GitHub вернул слишком большой или некорректный ZIP-архив."}
+            folder = Path.home() / "Mira-downloads"
+            folder.mkdir(exist_ok=True)
+            destination = folder / f"Mira-{uuid.uuid4().hex[:12]}.zip"
+            with destination.open("xb") as file:
+                file.write(archive)
+            return {"output": f"Архив скачан. Путь: {destination}"}
+        except OSError as error:
+            return {"output": f"Скачать архив не удалось. {error}"}
+    finally:
+        LOCK.release()
+
+
 def project_directory():
     return str(Path(os.environ.get("USB_AI_PROJECT") or os.environ.get("USB_AI_CRM_PROJECT")
                     or Path.home()).resolve(strict=True))
@@ -39,6 +67,8 @@ def project_directory():
 def execute(action, argument=None):
     if os.name != "nt":
         return {"output": "Команда доступна в Windows."}
+    if action == "download-mira":
+        return download_mira()
     windows = Path(os.environ["SystemRoot"]) / "System32"
     settings = os.environ
     project = Path(project_directory())

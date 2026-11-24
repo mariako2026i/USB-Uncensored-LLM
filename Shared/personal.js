@@ -313,23 +313,41 @@ window.parseMiraCodex = (text) => {
     .test(text.trim());
   window.openMiraYouTube = () => runAction('youtube');
 
+  const miraPrefix = /^(?:мира|нира)[\s,!.?—:;-]+/i;
+  const normalizeAction = (text) => text.trim().toLowerCase().replace(/[.!?…]+$/, '').replace(/\s+/g, ' ');
+  const miraArchive = 'https://github.com/mariako2026i/usb-uncensored-llm/archive/refs/heads/main.zip';
+  const downloadRequest = /^(?:скачай|загрузи) (?:мне )?(?:миру|usb-uncensored-llm|(?:архив|проект|обновление)(?: (?:миры|usb-uncensored-llm))?)(?: с (?:github|гитхаба)| по ссылке)?$/;
+
+  function namedAction(text) {
+    const phrase = normalizeAction(text);
+    const downloadPhrase = phrase.endsWith(' ' + miraArchive)
+      ? phrase.slice(0, -miraArchive.length).trim().replace(/:$/, '') : phrase;
+    if (downloadRequest.test(downloadPhrase)) return 'download-mira';
+    if (/^(?:проверь|проверь подключение к) (?:first ?vds|фёрст вдс|ферст вдс|серверу)$/.test(phrase)) {
+      return 'firstvds-check';
+    }
+    return commands.get(phrase);
+  }
+
   window.miraTypedAction = (text) => {
-    const match = /^(?:мира|нира)[\s,!.?—:;-]+(.+)$/.exec(text.trim().toLowerCase());
-    if (!match) return commands.get(text.trim().toLowerCase().replace(/[.!?…]+$/, '')) === 'firstvds-check';
-    const phrase = match[1].replace(/[.!?…]+$/, '');
-    return commands.has(phrase) || /^(?:открой сайт |(?:покажи|выполни) задачу(?: номер)? \d+$)/.test(phrase);
+    const request = text.trim();
+    const match = miraPrefix.exec(request);
+    const phrase = normalizeAction(request.replace(miraPrefix, ''));
+    const action = namedAction(phrase);
+    return match ? !!action || /^(?:открой сайт |(?:покажи|выполни) задачу(?: номер)? \d+$)/.test(phrase)
+      : action === 'firstvds-check' || action === 'download-mira';
   };
-  window.runMiraTypedAction = (text) => run(text.trim().replace(/^(?:мира|нира)[\s,!.?—:;-]+/i, ''));
+  window.runMiraTypedAction = (text) => run(text.trim().replace(miraPrefix, ''));
 
   async function run(text) {
     if (window.miraYouTube(text)) {
       await window.openMiraYouTube();
       return true;
     }
-    const phrase = text.trim().toLowerCase().replace(/[.!?]+$/, '');
-    const action = commands.get(phrase);
+    const phrase = normalizeAction(text);
+    const action = namedAction(phrase);
     if (action) {
-      if (action === 'firstvds-check' || window.confirm('Выполнить «' + phrase + '»?')) await runAction(action);
+      if (['firstvds-check', 'download-mira'].includes(action) || window.confirm('Выполнить «' + phrase + '»?')) await runAction(action);
       return true;
     }
 
