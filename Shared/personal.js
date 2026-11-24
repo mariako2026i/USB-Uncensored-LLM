@@ -3,7 +3,7 @@ window.isMiraStop = (text) => /^(?:(?:мира|нира|мера)[\s,!.?—:;-]+
   .test(text.trim());
 window.parseMiraCodex = (text) => {
   const command = text.trim().replace(/^["«„“]|["»”]$/g, '').trim();
-  const prefix = /^(?:[мн]ира[\s,!.?—:;-]+)?(?:\/codex|спроси\s+у\s+кодекс?а)(?=$|[\s,.!?—:;-])[\s,.!?—:;-]*/i;
+  const prefix = /^(?:[мн]ира[\s,!.?—:;-]+)?(?:\/codex|спроси\s+у\s+кодекс?а|(?:включи|открой|начни)\s+голосовой\s+чат\s+с\s+кодексом)(?=$|[\s,.!?—:;-])[\s,.!?—:;-]*/i;
   const match = prefix.exec(command);
   return match ? command.slice(match[0].length).trim() : null;
 };
@@ -27,6 +27,14 @@ window.parseMiraCodex = (text) => {
     ['включи ютуб', 'youtube'],
     ['открой crm', 'crm'],
     ['открой црм', 'crm'],
+    ['открой тестовую crm', 'test-crm'],
+    ['открой тестовую црм', 'test-crm'],
+    ['открой чатгпт', 'chatgpt'],
+    ['открой chatgpt', 'chatgpt'],
+    ['открой блокнот', 'notepad'],
+    ['открой калькулятор', 'calculator'],
+    ['открой настройки windows', 'windows-settings'],
+    ['открой настройки виндовс', 'windows-settings'],
     ['открой почту', 'mail'],
     ['открой gmail', 'gmail'],
     ['открой outlook', 'outlook'],
@@ -217,6 +225,11 @@ window.parseMiraCodex = (text) => {
 
     window.personalVoice = {
       start: startVoice, stop: stopVoice, lower: lowerVoice, playing: () => active?.playing(),
+      enable() {
+        enabled = true;
+        try { localStorage.setItem(preference, 'on'); } catch {}
+        updateVoiceButton();
+      },
     };
     if (synthesis && typeof voiceButton.after === 'function') {
       const select = document.createElement('select');
@@ -295,6 +308,14 @@ window.parseMiraCodex = (text) => {
     .test(text.trim());
   window.openMiraYouTube = () => runAction('youtube');
 
+  window.miraTypedAction = (text) => {
+    const match = /^(?:мира|нира)[\s,!.?—:;-]+(.+)$/.exec(text.trim().toLowerCase());
+    if (!match) return false;
+    const phrase = match[1].replace(/[.!?…]+$/, '');
+    return commands.has(phrase) || /^(?:открой сайт |(?:покажи|выполни) задачу(?: номер)? \d+$)/.test(phrase);
+  };
+  window.runMiraTypedAction = (text) => run(text.trim().replace(/^(?:мира|нира)[\s,!.?—:;-]+/i, ''));
+
   async function run(text) {
     if (window.miraYouTube(text)) {
       await window.openMiraYouTube();
@@ -315,6 +336,11 @@ window.parseMiraCodex = (text) => {
     }
 
     const site = /^открой\s+сайт\s+(.+)$/i.exec(text.trim());
+    const task = /^выполни задачу(?: номер)? (\d+)$/.exec(phrase);
+    if (task) {
+      await runAction('github-task', task[1]);
+      return true;
+    }
     const issue = /^покажи\s+(?:задачу|ишью)(?:\s+номер)?\s+(\d+)$/.exec(phrase);
     if (site) {
       let address = site[1].trim().replace(/\s+точка\s+/gi, '.');
@@ -461,6 +487,7 @@ window.parseMiraCodex = (text) => {
       }
       const codexQuestion = window.parseMiraCodex(question);
       if (codexQuestion !== null) {
+        if (/^(включи|открой|начни)\s+голосовой\s+чат/i.test(question)) window.personalVoice?.enable?.();
         setCodexMode(session, true);
         question = codexQuestion;
         if (!question) {
@@ -590,7 +617,7 @@ window.parseMiraCodex = (text) => {
   button.hidden = false;
   button.addEventListener('click', async () => {
     const text = window.prompt('Команда:\n' + Array.from(commands.keys()).join('\n') +
-      '\nоткрой сайт example.com\nпокажи задачу 12\nподготовь команду из ответа для PowerShell\nподготовь удаление файла имя.txt');
+      '\nоткрой сайт example.com\nпокажи задачу 12\nвыполни задачу 12\nподготовь команду из ответа для PowerShell\nподготовь удаление файла имя.txt');
     if (text && !(await run(text))) say('Команда не найдена.');
   });
   mic.hidden = false;

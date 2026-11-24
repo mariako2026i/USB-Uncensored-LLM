@@ -2,6 +2,7 @@
 
 import base64
 import ctypes
+import json
 import os
 from pathlib import Path
 import re
@@ -15,6 +16,10 @@ import uuid
 
 LOCK = threading.Lock()
 DELETE_LOCK = threading.Lock()
+GITHUB_TASK_ACTIONS = {
+    "website", "youtube", "github", "crm", "test-crm", "chatgpt",
+    "console", "project", "notepad", "calculator", "windows-settings", "system", "status",
+}
 PENDING_DELETE = None
 LOCAL_COMMANDS = {"get-location": "Get-Location", "get-date": "Get-Date",
                   "get-childitem": "Get-ChildItem", "git status": "git --no-optional-locks -c core.fsmonitor=false status"}
@@ -49,9 +54,25 @@ def execute(action, argument=None):
         "status": ["git.exe", "--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--short", "--branch"],
         "console": [str(powershell), "-NoProfile", "-NoExit"],
         "project": [str(windows.parent / "explorer.exe"), str(project)],
+        "notepad": [str(windows / "notepad.exe")],
+        "calculator": [str(windows / "calc.exe")],
     }
     repo = settings.get("USB_AI_GITHUB_REPO", "mariako2026i/mariako_crm")
-    if action in ("youtube", "github", "crm", "website", "mail", "gmail", "outlook", "yandex-mail"):
+    if action == "github-task":
+        result = execute("github-issue", argument)
+        if result.get("exit_code") != 0:
+            return result
+        next_action, parameter = github_task(result["output"])
+        label = next_action if parameter is None else f"{next_action}: {parameter}"
+        if not confirmed(f"GitHub: {repo} #{argument}", label):
+            return {"output": "Задача отменена."}
+        return execute(next_action, parameter)
+
+    if action == "windows-settings":
+        os.startfile("ms-settings:")
+        return {"output": "Открыты настройки Windows."}
+
+    if action in ("youtube", "github", "crm", "test-crm", "chatgpt", "website", "mail", "gmail", "outlook", "yandex-mail"):
         if action == "github" and not valid_repo(repo):
             raise ValueError("Invalid GitHub repository")
         if action == "mail" and not settings.get("USB_AI_MAIL_URL"):
@@ -60,6 +81,8 @@ def execute(action, argument=None):
             "youtube": "https://www.youtube.com/",
             "github": "https://github.com/" + repo,
             "crm": settings.get("USB_AI_CRM_URL") or "http://localhost:3000/",
+            "test-crm": "http://127.0.0.1:8081/",
+            "chatgpt": "https://chatgpt.com/",
             "website": argument,
             "mail": settings.get("USB_AI_MAIL_URL"),
             "gmail": "https://mail.google.com/",
@@ -119,7 +142,7 @@ def execute(action, argument=None):
     else:
         command = commands[action]
 
-    if action in {"console", "project", "ssh"}:
+    if action in {"console", "project", "ssh", "notepad", "calculator"}:
         flags = subprocess.CREATE_NEW_CONSOLE if action in {"console", "ssh"} else 0
         subprocess.Popen(command, cwd=project, env=clean_env, creationflags=flags)
         return {"output": "Открыто окно SSH." if action == "ssh" else "Окно открыто."}
@@ -142,6 +165,29 @@ def execute(action, argument=None):
     finally:
         LOCK.release()
 
+
+
+
+def github_task(body):
+    blocks = re.findall(r"^```mira[ \t]*\r?\n([\s\S]*?)^```[ \t]*$", body, re.M)
+    if len(blocks) != 1:
+        raise ValueError("Expected one Mira action block")
+    task = json.loads(blocks[0])
+    if not isinstance(task, dict) or not set(task) <= {"action", "argument"}:
+        raise ValueError("Invalid Mira task")
+    action = task.get("action")
+    argument = task.get("argument")
+    if not isinstance(action, str) or action not in GITHUB_TASK_ACTIONS:
+        raise ValueError("Task action not allowed")
+    if action == "website":
+        # GitHub tasks may open public HTTPS tabs. Explicit local commands
+        # continue to support the configured CRM and localhost pages.
+        argument = browser_url(argument)
+        if urlsplit(argument).scheme != "https":
+            raise ValueError("A GitHub website task requires HTTPS")
+    elif argument is not None:
+        raise ValueError("This action takes no argument")
+    return action, argument
 
 
 def valid_repo(repo):

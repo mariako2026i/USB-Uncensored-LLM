@@ -2589,6 +2589,13 @@
           await window.openMiraYouTube();
           return;
         }
+        if (!codex && !S.streaming && window.miraTypedAction?.(text)) {
+          D.inp.value = '';
+          autoResize();
+          updateSend();
+          await window.runMiraTypedAction(text);
+          return;
+        }
         const terminal = !codex && window.parseMiraTerminal?.(text);
         if (terminal) {
           if (S.streaming) return;
@@ -3159,7 +3166,7 @@
         const has = D.inp.value.trim().length > 0 || S.attachments.length > 0;
         const codexQuestion = window.parseMiraCodex?.(D.inp.value);
         const terminal = window.parseMiraTerminal?.(D.inp.value);
-        const canSend = !!terminal || window.isMiraStop?.(D.inp.value) ||
+        const canSend = !!terminal || window.miraTypedAction?.(D.inp.value) || window.isMiraStop?.(D.inp.value) ||
           window.miraYouTube?.(D.inp.value) || (codexQuestion != null
           ? !!codexQuestion && !S.attachments.length
           : has && S.engineReady && !!S.model);
@@ -3336,6 +3343,6 @@
       // ÔöÇÔöÇ Start ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
       init();
     </script>
-    <script src="/personal.js?v=mira-voice-interrupt"></script>
+    <script src="/personal.js?v=mira-codex-voice"></script>
   </body>
 </html>
