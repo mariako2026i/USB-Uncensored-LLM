@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 from urllib.parse import urlsplit
 from urllib.request import urlopen
-from zipfile import is_zipfile
+from zipfile import BadZipFile, ZipFile
 import webbrowser
 import threading
 import time
@@ -45,16 +45,33 @@ def download_mira():
         try:
             with urlopen(MIRA_ARCHIVE_URL, timeout=20) as response:
                 archive = response.read(MIRA_ARCHIVE_LIMIT + 1)
-            if len(archive) > MIRA_ARCHIVE_LIMIT or not is_zipfile(BytesIO(archive)):
+            if len(archive) > MIRA_ARCHIVE_LIMIT:
                 return {"output": "GitHub вернул слишком большой или некорректный ZIP-архив."}
-            folder = Path.home() / "Mira-downloads"
-            folder.mkdir(exist_ok=True)
-            destination = folder / f"Mira-{uuid.uuid4().hex[:12]}.zip"
-            with destination.open("xb") as file:
-                file.write(archive)
-            return {"output": f"Архив скачан. Путь: {destination}"}
-        except OSError as error:
-            return {"output": f"Скачать архив не удалось. {error}"}
+            with ZipFile(BytesIO(archive)) as package:
+                if sum(entry.file_size for entry in package.infolist()) > 128 * 1024 * 1024:
+                    return {"output": "Распакованный архив GitHub слишком большой."}
+                for entry in package.infolist():
+                    parts = entry.filename.rstrip("/").split("/")
+                    if any(part in {"", ".", ".."} or part.endswith((".", " ")) or
+                           Path(part).is_reserved() or re.search(r'[<>:"\\|?*\x00-\x1f]', part) for part in parts):
+                        raise BadZipFile("Недопустимый путь в архиве GitHub.")
+                folder = Path.home() / "Mira-downloads" / f"Mira-{uuid.uuid4().hex[:12]}"
+                folder.mkdir(parents=True, exist_ok=False)
+                destination = folder / "Mira.zip"
+                with destination.open("xb") as file:
+                    file.write(archive)
+                project = folder / "project"
+                for entry in package.infolist():
+                    target = project / entry.filename
+                    if entry.is_dir():
+                        target.mkdir(parents=True, exist_ok=True)
+                    else:
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        with target.open("xb") as file:
+                            file.write(package.read(entry))
+            return {"output": f"Мира скачала и распаковала архив. Папка проекта: {project}"}
+        except (OSError, BadZipFile, RuntimeError, NotImplementedError) as error:
+            return {"output": f"Не удалось скачать или распаковать архив. {error}"}
     finally:
         LOCK.release()
 

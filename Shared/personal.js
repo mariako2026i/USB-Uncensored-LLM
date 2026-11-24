@@ -316,13 +316,22 @@ window.parseMiraCodex = (text) => {
   const miraPrefix = /^(?:мира|нира)[\s,!.?—:;-]+/i;
   const normalizeAction = (text) => text.trim().toLowerCase().replace(/[.!?…]+$/, '').replace(/\s+/g, ' ');
   const miraArchive = 'https://github.com/mariako2026i/usb-uncensored-llm/archive/refs/heads/main.zip';
-  const downloadRequest = /^(?:скачай|загрузи) (?:мне )?(?:миру|usb-uncensored-llm|(?:архив|проект|обновление)(?: (?:миры|usb-uncensored-llm))?)(?: с (?:github|гитхаба)| по ссылке)?$/;
+  const downloadRequest = /^(?:скачай|загрузи)(?: и распакуй)? (?:мне )?(?:(?:миру|usb-uncensored-llm|(?:архив|проект|обновление)(?: (?:миры|usb-uncensored-llm))?)(?: (?:с github|с гитхаба|по ссылке))?|(?:по (?:этой )?ссылке|с этой ссылки))$/;
 
   function namedAction(text) {
     const phrase = normalizeAction(text);
-    const downloadPhrase = phrase.endsWith(' ' + miraArchive)
-      ? phrase.slice(0, -miraArchive.length).trim().replace(/:$/, '') : phrase;
-    if (downloadRequest.test(downloadPhrase)) return 'download-mira';
+    const request = phrase.replace(/^(?:пожалуйста,? |можешь |пожалуйста,? можешь )+/, '')
+      .replace(/,? пожалуйста$/, '')
+      .replace(/^скачать(?= |$)/, 'скачай').replace(/^загрузить(?= |$)/, 'загрузи')
+      .replace(/,? и распакуй$/, '');
+    const suffix = /(?:^|[ :])(?:<([^<> ]+)>|\[[^\]]*\]\(([^() ]+)\)|([^ ]+))$/.exec(request);
+    if (suffix?.slice(1).includes(miraArchive)) {
+      const instruction = request.slice(0, suffix.index).trim().replace(/:$/, '');
+      if (/^(?:скачай|загрузи)(?: и распакуй)?$/.test(instruction) || downloadRequest.test(instruction)) {
+        return 'download-mira';
+      }
+    }
+    if (downloadRequest.test(request)) return 'download-mira';
     if (/^(?:проверь|проверь подключение к) (?:first ?vds|фёрст вдс|ферст вдс|серверу)$/.test(phrase)) {
       return 'firstvds-check';
     }
