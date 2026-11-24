@@ -314,6 +314,8 @@ window.parseMiraCodex = (text) => {
   window.openMiraYouTube = () => runAction('youtube');
 
   const miraPrefix = /^(?:мира|нира)[\s,!.?—:;-]+/i;
+  const unwrapCommand = (text) => text.trim().replace(/^(?:«([^]*?)»|“([^]*?)”|"([^]*?)"|„([^]*?)“)$/, (_, ...groups) =>
+    groups.slice(0, 4).find((value) => value !== undefined).trim());
   const normalizeAction = (text) => text.trim().toLowerCase().replace(/[.!?…]+$/, '').replace(/\s+/g, ' ');
   const miraArchive = 'https://github.com/mariako2026i/usb-uncensored-llm/archive/refs/heads/main.zip';
   const downloadRequest = /^(?:скачай|загрузи)(?: и распакуй)? (?:мне )?(?:(?:миру|usb-uncensored-llm|(?:архив|проект|обновление)(?: (?:миры|usb-uncensored-llm))?)(?: (?:с github|с гитхаба|по ссылке))?|(?:по (?:этой )?ссылке|с этой ссылки))$/;
@@ -339,14 +341,14 @@ window.parseMiraCodex = (text) => {
   }
 
   window.miraTypedAction = (text) => {
-    const request = text.trim();
+    const request = unwrapCommand(text);
     const match = miraPrefix.exec(request);
     const phrase = normalizeAction(request.replace(miraPrefix, ''));
     const action = namedAction(phrase);
     return match ? !!action || /^(?:открой сайт |(?:покажи|выполни) задачу(?: номер)? \d+$)/.test(phrase)
       : action === 'firstvds-check' || action === 'download-mira';
   };
-  window.runMiraTypedAction = (text) => run(text.trim().replace(miraPrefix, ''));
+  window.runMiraTypedAction = (text) => run(unwrapCommand(text).replace(miraPrefix, ''));
 
   async function run(text) {
     if (window.miraYouTube(text)) {
