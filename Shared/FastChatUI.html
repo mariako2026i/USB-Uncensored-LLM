@@ -2575,6 +2575,15 @@
 
       // ÔöÇÔöÇ Send / Stream to Ollama ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
       async function sendMsg(text, {codex = false} = {}) {
+        const codexQuestion = codex ? null : window.parseMiraCodex?.(text);
+        if (codexQuestion != null) {
+          text = codexQuestion;
+          codex = true;
+        }
+        if (codex && (!text.trim() || S.attachments.length)) {
+          toast('Введите вопрос Кодексу без вложений.');
+          return;
+        }
         if (!codex && (!S.engineReady || !S.model)) {
           toast(S.models.length ? 'Select a model first' : 'No models installed');
           updateSend();
@@ -3125,7 +3134,10 @@
 
       function updateSend() {
         const has = D.inp.value.trim().length > 0 || S.attachments.length > 0;
-        const canSend = has && S.engineReady && !!S.model;
+        const codexQuestion = window.parseMiraCodex?.(D.inp.value);
+        const canSend = codexQuestion != null
+          ? !!codexQuestion && !S.attachments.length
+          : has && S.engineReady && !!S.model;
         D.iw.classList.toggle('ht', has);
         if (S.streaming) {
           D.send.className = 'ib2 stbtn';
@@ -3299,6 +3311,6 @@
       // ÔöÇÔöÇ Start ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
       init();
     </script>
-    <script src="/personal.js"></script>
+    <script src="/personal.js?v=codex-text"></script>
   </body>
 </html>

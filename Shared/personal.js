@@ -1,4 +1,10 @@
 window.personalMode = true;
+window.parseMiraCodex = (text) => {
+  const command = text.trim().replace(/^["«„“]|["»”]$/g, '').trim();
+  const prefix = /^(?:[мн]ира[\s,!.?—:;-]+)?(?:\/codex|спроси\s+у\s+кодекса)(?=$|[\s,.!?—:;-])[\s,.!?—:;-]*/i;
+  const match = prefix.exec(command);
+  return match ? command.slice(match[0].length).trim() : null;
+};
 
 (() => {
   const commands = new Map([
@@ -11,6 +17,7 @@ window.personalMode = true;
   const mic = document.getElementById('personal-mic');
   const button = document.getElementById('personal-command');
   const input = document.getElementById('msg-inp');
+  input.placeholder = 'Сообщение или /codex вопрос';
   document.querySelector('.disc').textContent =
     'Ответы могут содержать ошибки. Облачные модели получают историю чата после подтверждения.';
   const output = document.createElement('pre');
@@ -265,7 +272,7 @@ window.personalMode = true;
       const result = await response.json();
       if (session !== mira) return;
       if (!response.ok) throw new Error(result.error);
-      const text = result.text.trim();
+      const text = result.text.trim().replace(/^["«„“]|["»”]$/g, '').trim();
       const wake = /^[мн]ира(?=$|[\s,!.?—:;-])[\s,!.?—:;-]*/i.exec(text);
       if (wake && /^стоп[.!?…]*$/i.test(text.slice(wake[0].length))) {
         session.reply = null;
@@ -292,10 +299,10 @@ window.personalMode = true;
         acknowledgement?.finish();
         return;
       }
-      const codexRequest = /^спроси\s+у\s+кодекса(?=$|[\s,.!?—:;-])[\s,.!?—:;-]*/i.exec(question);
-      const codex = !!codexRequest || Date.now() < session.codexUntil;
-      if (codexRequest) {
-        question = question.slice(codexRequest[0].length);
+      const codexQuestion = window.parseMiraCodex(question);
+      const codex = codexQuestion !== null || Date.now() < session.codexUntil;
+      if (codexQuestion !== null) {
+        question = codexQuestion;
         if (!question) {
           session.codexUntil = session.until;
           say('Задайте вопрос Кодексу. В режиме CRM Кодекс использует файлы выбранного проекта.');
