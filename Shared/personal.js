@@ -18,6 +18,11 @@ window.parseMiraCodex = (text) => {
     ['открой гитхаб', 'github'],
     ['покажи задачи github', 'github-issues'],
     ['покажи задачи гитхаб', 'github-issues'],
+    ['проверь firstvds', 'firstvds-check'],
+    ['проверь first vds', 'firstvds-check'],
+    ['проверь сервер', 'firstvds-check'],
+    ['найди crm на сервере', 'firstvds-check'],
+    ['найди црм на сервере', 'firstvds-check'],
     ['открой firstvds', 'ssh'],
     ['открой first vds', 'ssh'],
     ['открой консоль сервера', 'ssh'],
@@ -310,7 +315,7 @@ window.parseMiraCodex = (text) => {
 
   window.miraTypedAction = (text) => {
     const match = /^(?:мира|нира)[\s,!.?—:;-]+(.+)$/.exec(text.trim().toLowerCase());
-    if (!match) return false;
+    if (!match) return commands.get(text.trim().toLowerCase().replace(/[.!?…]+$/, '')) === 'firstvds-check';
     const phrase = match[1].replace(/[.!?…]+$/, '');
     return commands.has(phrase) || /^(?:открой сайт |(?:покажи|выполни) задачу(?: номер)? \d+$)/.test(phrase);
   };
@@ -324,7 +329,7 @@ window.parseMiraCodex = (text) => {
     const phrase = text.trim().toLowerCase().replace(/[.!?]+$/, '');
     const action = commands.get(phrase);
     if (action) {
-      if (window.confirm('Выполнить «' + phrase + '»?')) await runAction(action);
+      if (action === 'firstvds-check' || window.confirm('Выполнить «' + phrase + '»?')) await runAction(action);
       return true;
     }
 

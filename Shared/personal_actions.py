@@ -23,6 +23,7 @@ GITHUB_TASK_ACTIONS = {
 PENDING_DELETE = None
 LOCAL_COMMANDS = {"get-location": "Get-Location", "get-date": "Get-Date",
                   "get-childitem": "Get-ChildItem", "git status": "git --no-optional-locks -c core.fsmonitor=false status"}
+FIRSTVDS_CHECKS = ("whoami", "docker compose version", "docker ps -a")
 REMOTE_COMMANDS = {
     "pwd", "uptime", "df -h", "free -h", "whoami", "ls",
     "docker ps", "docker ps -a", "docker compose version",
@@ -102,18 +103,22 @@ def execute(action, argument=None):
     if action == "deploy":
         return {"output": "Автозапуск деплоя выключен: скрипт может удалять файлы. Откройте консоль сервера."}
 
-    if action in ("ssh", "ssh-command"):
+    if action in ("ssh", "ssh-command", "firstvds-check"):
         profile = Path.home() / ".ssh" / "mira-firstvds.conf"
         alias = settings.get("USB_AI_SSH_ALIAS") or ("firstvds" if profile.is_file() else "")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", alias):
             return {"output": "Запустите Windows\\setup-firstvds.bat или укажите SSH-профиль в USB_AI_SSH_ALIAS."}
         command = [str(windows / "OpenSSH" / "ssh.exe")]
-        if alias == "firstvds" and profile.is_file() and action == "ssh-command":
+        if alias == "firstvds" and profile.is_file() and action != "ssh":
             command.extend(["-F", str(profile)])
         elif not settings.get("USB_AI_SSH_ALIAS") and action == "ssh":
             return {"output": "Ключ Миры предназначен для диагностики. Для интерактивного входа используйте обычный SSH."}
         command.extend(["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o",
                         "ConnectTimeout=10", "--", alias])
+        if action == "firstvds-check":
+            if not confirmed(f"FirstVDS: {alias}", "\n".join(FIRSTVDS_CHECKS)):
+                return {"output": "Проверка отменена."}
+            return firstvds_check(command, project, clean_env)
         if action == "ssh-command":
             text = command_text(argument, multiline=False)
             if text not in REMOTE_COMMANDS:
@@ -165,6 +170,34 @@ def execute(action, argument=None):
     finally:
         LOCK.release()
 
+
+
+def firstvds_check(command, project, env):
+    if not LOCK.acquire(blocking=False):
+        return {"output": "Другая команда ещё выполняется."}
+    try:
+        sections = []
+        exit_code = 0
+        for probe in FIRSTVDS_CHECKS:
+            try:
+                result = subprocess.run(
+                    [*command, probe], cwd=project, env=env, stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=15,
+                )
+            except subprocess.TimeoutExpired:
+                sections.append(f"$ {probe}\nSSH: истекло время ожидания.")
+                exit_code = 124
+                break
+            output = result.stdout[:8192].decode("utf-8", errors="replace").strip()
+            if len(result.stdout) > 8192:
+                output += "\n… вывод сокращён"
+            sections.append(f"$ {probe} (код {result.returncode})\n{output}")
+            exit_code = exit_code or result.returncode
+            if result.returncode == 255:
+                break
+        return {"output": "\n\n".join(sections), "exit_code": exit_code}
+    finally:
+        LOCK.release()
 
 
 
