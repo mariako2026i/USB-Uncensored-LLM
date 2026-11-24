@@ -11,6 +11,7 @@ Works on Windows, macOS, and Linux without installing anything.
 """
 
 import http.server
+import inspect
 import json
 import os
 import sys
@@ -592,12 +593,20 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
             size = int(self.headers.get("Content-Length", "0"))
             if not 44 <= size <= personal_whisper.MAX_BYTES:
                 raise ValueError("Некорректный размер записи.")
-            text = personal_whisper.transcribe(self.rfile.read(size), interrupt=interrupt)
+            audio = self.rfile.read(size)
+            transcribe = personal_whisper.transcribe
+            if interrupt and "interrupt" in inspect.signature(transcribe).parameters:
+                text = transcribe(audio, interrupt=True)
+            else:
+                text = transcribe(audio)
             result, status = {"text": text}, 200
         except ValueError as error:
             result, status = {"error": str(error)}, 400
         except subprocess.SubprocessError:
             result, status = {"error": "Whisper не смог распознать запись. Проверьте установку Миры."}, 503
+        except TypeError:
+            _log_event(logging.ERROR, "Mira transcription module failed", exc_info=True)
+            result, status = {"error": "Обновите Shared\\personal_whisper.py из той же версии Миры."}, 503
         except OSError:
             message = ("Не удалось обработать запись на этом ПК." if personal_whisper.ready()
                        else "Сначала запустите Windows\\install-mira.bat.")

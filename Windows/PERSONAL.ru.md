@@ -29,6 +29,8 @@
 
 Для обновления ранее установленной копии замените `Shared\FastChatUI.html`, `Shared\chat_server.py` и `Shared\personal.js`, скопируйте также `Shared\personal_whisper.py`, `Shared\personal_voice.py` и оба файла `Windows\install-mira.*`. Запустите установщик Миры в обновлённой папке. Существующий Ollama и его модели можно оставить на месте.
 
+Если в терминале появилась ошибка `unexpected keyword argument 'interrupt'`, закройте Миру и скопируйте свежие `chat_server.py` и `personal_whisper.py` в папку `Shared` установленной копии. Переустанавливать Whisper или Piper не нужно.
+
 ## Облачные модели
 
 Скопируйте `Shared\personal-models.example.json` в `Shared\personal-models.json`. Укажите идентификатор модели, адрес OpenAI-совместимого API (включая `/v1`, если его требует провайдер) и имя переменной окружения с ключом. Перед запуском задайте эту переменную вне репозитория. Профили с заданным ключом появятся в списке под префиксом `cloud/`.
