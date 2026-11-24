@@ -18,7 +18,11 @@ DELETE_LOCK = threading.Lock()
 PENDING_DELETE = None
 LOCAL_COMMANDS = {"get-location": "Get-Location", "get-date": "Get-Date",
                   "get-childitem": "Get-ChildItem", "git status": "git --no-optional-locks -c core.fsmonitor=false status"}
-REMOTE_COMMANDS = {"pwd", "uptime", "df -h", "free -h", "whoami", "ls"}
+REMOTE_COMMANDS = {
+    "pwd", "uptime", "df -h", "free -h", "whoami", "ls",
+    "docker ps", "docker ps -a", "docker compose version",
+    "ss -lntp | grep -E ':(80|443)[[:space:]]'",
+}
 
 
 def project_directory():
@@ -84,7 +88,7 @@ def execute(action, argument=None):
         if action == "ssh-command":
             text = command_text(argument, multiline=False)
             if text not in REMOTE_COMMANDS:
-                return {"output": "В голосовом режиме доступны только команды SSH: " + ", ".join(sorted(REMOTE_COMMANDS))}
+                return {"output": "Через Миру доступны диагностические команды SSH:\n" + "\n".join(sorted(REMOTE_COMMANDS))}
             if not confirmed(f"FirstVDS: {alias}", text):
                 return {"output": "Команда отменена."}
             command.append(text)
