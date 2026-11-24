@@ -23,7 +23,7 @@ def ready():
     return EXE.is_file() and model_path().is_file()
 
 
-def transcribe(data):
+def transcribe(data, interrupt=False):
     try:
         with wave.open(io.BytesIO(data), "rb") as audio:
             if (audio.getnchannels(), audio.getsampwidth(), audio.getframerate()) != (1, 2, 16000):
@@ -41,9 +41,13 @@ def transcribe(data):
         with tempfile.TemporaryDirectory(prefix="usb-ai-mira-") as folder:
             recording = Path(folder) / "voice.wav"
             recording.write_bytes(data)
+            model = STANDARD_MODEL if interrupt and STANDARD_MODEL.is_file() else model_path()
+            command = [str(EXE), "-m", str(model), "-f", str(recording), "-l", "ru",
+                       "-ng", "-t", "4", "-otxt", "-of", str(recording.with_suffix(""))]
+            if interrupt:
+                command.extend(["--beam-size", "1", "--best-of", "1", "--no-fallback"])
             subprocess.run(
-                [str(EXE), "-m", str(model_path()), "-f", str(recording), "-l", "ru",
-                 "-ng", "-t", "4", "-otxt", "-of", str(recording.with_suffix(""))],
+                command,
                 cwd=EXE.parent, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL, timeout=40, check=True,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),

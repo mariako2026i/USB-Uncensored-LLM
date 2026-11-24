@@ -1,7 +1,7 @@
 window.personalMode = true;
 window.parseMiraCodex = (text) => {
   const command = text.trim().replace(/^["«„“]|["»”]$/g, '').trim();
-  const prefix = /^(?:[мн]ира[\s,!.?—:;-]+)?(?:\/codex|спроси\s+у\s+кодекса)(?=$|[\s,.!?—:;-])[\s,.!?—:;-]*/i;
+  const prefix = /^(?:[мн]ира[\s,!.?—:;-]+)?(?:\/codex|спроси\s+у\s+кодекс?а)(?=$|[\s,.!?—:;-])[\s,.!?—:;-]*/i;
   const match = prefix.exec(command);
   return match ? command.slice(match[0].length).trim() : null;
 };
@@ -217,10 +217,16 @@ window.parseMiraCodex = (text) => {
   button.before(miraButton);
   let mira = null;
 
+  function setCodexMode(session, enabled) {
+    session.codexMode = enabled;
+    miraButton.textContent = enabled ? 'Мира · Кодекс' : 'Мира';
+  }
+
   function stopMira() {
     const session = mira;
     if (!session) return;
     mira = null;
+    setCodexMode(session, false);
     session.abort.abort();
     session.processor?.disconnect();
     session.stream?.getTracks().forEach((track) => track.stop());
@@ -265,7 +271,8 @@ window.parseMiraCodex = (text) => {
   async function recognizeMira(session, chunks, interruptOnly) {
     session.busy = true;
     try {
-      const response = await fetch('/api/personal/transcribe', {
+      const endpoint = interruptOnly ? '/api/personal/transcribe?interrupt=1' : '/api/personal/transcribe';
+      const response = await fetch(endpoint, {
         method: 'POST', headers: {'Content-Type': 'audio/wav'},
         body: toWav(chunks), signal: session.abort.signal,
       });
@@ -274,9 +281,9 @@ window.parseMiraCodex = (text) => {
       if (!response.ok) throw new Error(result.error);
       const text = result.text.trim().replace(/^["«„“]|["»”]$/g, '').trim();
       const wake = /^[мн]ира(?=$|[\s,!.?—:;-])[\s,!.?—:;-]*/i.exec(text);
-      if (wake && /^стоп[.!?…]*$/i.test(text.slice(wake[0].length))) {
+      const stop = /^(?:мира|нира|мера)[\s,!.?—:;-]+(?:стоп|стой|столб)[.!?…]*$/i.test(text);
+      if (stop && (wake || interruptOnly || replyInProgress())) {
         session.reply = null;
-        session.codexUntil = 0;
         stopStream();
         session.until = Date.now() + 20000;
         say('Остановлено. Скажите исправленный вопрос.');
@@ -287,11 +294,16 @@ window.parseMiraCodex = (text) => {
       let question = wake ? text.slice(wake[0].length) : text;
       if (/^(стоп|закончи разговор)[.!?]*$/i.test(question)) {
         session.until = 0;
-        session.codexUntil = 0;
+        setCodexMode(session, false);
         say('Скажите «Мира», чтобы начать разговор.');
         return;
       }
       session.until = Date.now() + 20000;
+      if (/^(?:вернись в локальный режим|локально)[.!?…]*$/i.test(question)) {
+        setCodexMode(session, false);
+        say('Локальный режим включён.');
+        return;
+      }
       if (!question) {
         say('Слушаю. Задайте вопрос.');
         const acknowledgement = window.personalVoice?.start();
@@ -300,18 +312,18 @@ window.parseMiraCodex = (text) => {
         return;
       }
       const codexQuestion = window.parseMiraCodex(question);
-      const codex = codexQuestion !== null || Date.now() < session.codexUntil;
       if (codexQuestion !== null) {
+        setCodexMode(session, true);
         question = codexQuestion;
         if (!question) {
-          session.codexUntil = session.until;
-          say('Задайте вопрос Кодексу. В режиме CRM Кодекс использует файлы выбранного проекта.');
+          say('Режим Кодекса включён. Задайте вопрос.');
           const prompt = window.personalVoice?.start();
           prompt?.append('Какой вопрос передать Кодексу?');
           prompt?.finish();
           return;
         }
       }
+      const codex = session.codexMode;
       if (!codex && await run(question)) return;
       if (session !== mira) return;
       if (!codex && (!S.engineReady || !S.model)) {
@@ -322,7 +334,6 @@ window.parseMiraCodex = (text) => {
         say('Завершите текущий ответ или очистите черновик и повторите вопрос.');
         return;
       }
-      session.codexUntil = 0;
       say(codex ? 'Спрашиваю Кодекса…' : 'Мира отвечает…');
       const reply = sendMsg(question, {codex});
       session.reply = reply;
@@ -330,7 +341,8 @@ window.parseMiraCodex = (text) => {
         if (session !== mira || session.reply !== reply) return;
         session.reply = null;
         session.until = Date.now() + 20000;
-        say('Задайте следующий вопрос или скажите «Мира, стоп».');
+        say(codex ? 'Режим Кодекса. Задайте следующий вопрос.'
+                  : 'Задайте следующий вопрос или скажите «Мира, стоп».');
       }).catch(() => {
         if (session === mira && session.reply === reply) {
           session.reply = null;
@@ -352,7 +364,7 @@ window.parseMiraCodex = (text) => {
       say('Ожидание имени выключено.');
       return;
     }
-    const session = {abort: new AbortController(), until: 0, codexUntil: 0, busy: false};
+    const session = {abort: new AbortController(), until: 0, codexMode: false, busy: false};
     mira = session;
     miraButton.setAttribute('aria-pressed', 'true');
     miraButton.style.background = 'var(--grad1)';
@@ -380,7 +392,6 @@ window.parseMiraCodex = (text) => {
       processor.onaudioprocess = (event) => {
         const replying = replyInProgress();
         if (replying && session.until) session.until = Date.now() + 20000;
-        if (replying && session.codexUntil) session.codexUntil = session.until;
         if (session !== mira || session.busy) {
           chunks = [];
           preroll = [];
@@ -405,7 +416,9 @@ window.parseMiraCodex = (text) => {
         chunks.push(samples.slice());
         if (speaking) voiced++;
         silence = speaking ? 0 : silence + 1;
-        if (silence >= 6 || chunks.length >= 90) {
+        const silenceLimit = interruptOnly ? 3 : 6;
+        const clipLimit = interruptOnly ? 20 : 90;
+        if (silence >= silenceLimit || chunks.length >= clipLimit) {
           if (voiced >= 2) recognizeMira(session, chunks, interruptOnly);
           chunks = [];
           voiced = silence = 0;

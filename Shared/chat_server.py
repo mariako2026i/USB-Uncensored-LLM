@@ -583,7 +583,7 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(audio)
 
-    def _mira_transcribe(self):
+    def _mira_transcribe(self, interrupt=False):
         if (self.headers.get("Origin") != "http://" + self.headers["Host"]
                 or self.headers.get_content_type() != "audio/wav"):
             self.send_error(403)
@@ -592,7 +592,7 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
             size = int(self.headers.get("Content-Length", "0"))
             if not 44 <= size <= personal_whisper.MAX_BYTES:
                 raise ValueError("Некорректный размер записи.")
-            text = personal_whisper.transcribe(self.rfile.read(size))
+            text = personal_whisper.transcribe(self.rfile.read(size), interrupt=interrupt)
             result, status = {"text": text}, 200
         except ValueError as error:
             result, status = {"error": str(error)}, 400
@@ -623,7 +623,7 @@ class ChatHandler(http.server.BaseHTTPRequestHandler):
             self._mira_speak()
 
         elif PERSONAL_MODE and path == "/api/personal/transcribe":
-            self._mira_transcribe()
+            self._mira_transcribe(interrupt=urlparse(self.path).query == "interrupt=1")
 
         elif PERSONAL_MODE and path == "/api/personal/action":
             if (self.headers.get("Origin") != "http://" + self.headers["Host"]
