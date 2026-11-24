@@ -2575,6 +2575,20 @@
 
       // ÔöÇÔöÇ Send / Stream to Ollama ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
       async function sendMsg(text, {codex = false} = {}) {
+        if (!codex && window.isMiraStop?.(text)) {
+          stopStream();
+          D.inp.value = '';
+          autoResize();
+          updateSend();
+          return;
+        }
+        if (!codex && !S.streaming && window.miraYouTube?.(text)) {
+          D.inp.value = '';
+          autoResize();
+          updateSend();
+          await window.openMiraYouTube();
+          return;
+        }
         const terminal = !codex && window.parseMiraTerminal?.(text);
         if (terminal) {
           if (S.streaming) return;
@@ -3145,7 +3159,8 @@
         const has = D.inp.value.trim().length > 0 || S.attachments.length > 0;
         const codexQuestion = window.parseMiraCodex?.(D.inp.value);
         const terminal = window.parseMiraTerminal?.(D.inp.value);
-        const canSend = !!terminal || (codexQuestion != null
+        const canSend = !!terminal || window.isMiraStop?.(D.inp.value) ||
+          window.miraYouTube?.(D.inp.value) || (codexQuestion != null
           ? !!codexQuestion && !S.attachments.length
           : has && S.engineReady && !!S.model);
         D.iw.classList.toggle('ht', has);
@@ -3252,7 +3267,7 @@
         D.inp.addEventListener('keydown', (e) => {
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            if (!S.streaming) sendMsg(D.inp.value);
+            if (!S.streaming || window.isMiraStop?.(D.inp.value)) sendMsg(D.inp.value);
           }
           if (e.key === 'Escape' && S.streaming) stopStream();
         });
@@ -3321,6 +3336,6 @@
       // ÔöÇÔöÇ Start ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
       init();
     </script>
-    <script src="/personal.js?v=mira-workspace-actions"></script>
+    <script src="/personal.js?v=mira-voice-shortcuts"></script>
   </body>
 </html>

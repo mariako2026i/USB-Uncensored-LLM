@@ -1,4 +1,6 @@
 window.personalMode = true;
+window.isMiraStop = (text) => /^(?:(?:мира|нира|мера)[\s,!.?—:;-]+(?:стоп|стой|столб)|стоп|стой)[.!?…]*$/i
+  .test(text.trim());
 window.parseMiraCodex = (text) => {
   const command = text.trim().replace(/^["«„“]|["»”]$/g, '').trim();
   const prefix = /^(?:[мн]ира[\s,!.?—:;-]+)?(?:\/codex|спроси\s+у\s+кодекс?а)(?=$|[\s,.!?—:;-])[\s,.!?—:;-]*/i;
@@ -21,6 +23,8 @@ window.parseMiraCodex = (text) => {
     ['открой консоль сервера', 'ssh'],
     ['открой youtube', 'youtube'],
     ['открой ютуб', 'youtube'],
+    ['включи youtube', 'youtube'],
+    ['включи ютуб', 'youtube'],
     ['открой crm', 'crm'],
     ['открой црм', 'crm'],
     ['открой почту', 'mail'],
@@ -235,7 +239,15 @@ window.parseMiraCodex = (text) => {
     await runAction(match[1].toLowerCase() === '/ps' ? 'powershell' : 'ssh-command', argument);
   };
 
+  window.miraYouTube = (text) => /^(?:(?:мира|нира)[\s,!.?—:;-]+)?(?:открой|включи)\s+(?:youtube|ютуб)[.!?…]*$/i
+    .test(text.trim());
+  window.openMiraYouTube = () => runAction('youtube');
+
   async function run(text) {
+    if (window.miraYouTube(text)) {
+      await window.openMiraYouTube();
+      return true;
+    }
     const phrase = text.trim().toLowerCase().replace(/[.!?]+$/, '');
     const action = commands.get(phrase);
     if (action) {
@@ -355,8 +367,7 @@ window.parseMiraCodex = (text) => {
       if (!response.ok) throw new Error(result.error);
       const text = result.text.trim().replace(/^["«„“]|["»”]$/g, '').trim();
       const wake = /^[мн]ира(?=$|[\s,!.?—:;-])[\s,!.?—:;-]*/i.exec(text);
-      const stop = /^(?:мира|нира|мера)[\s,!.?—:;-]+(?:стоп|стой|столб)[.!?…]*$/i.test(text);
-      if (stop && (wake || interruptOnly || replyInProgress())) {
+      if (window.isMiraStop(text)) {
         session.reply = null;
         pendingDelete = null;
         stopStream();
@@ -408,7 +419,7 @@ window.parseMiraCodex = (text) => {
         }
       }
       const codex = session.codexMode;
-      if (codexQuestion === null && (!codex || wake) && await run(question)) return;
+      if (codexQuestion === null && (!codex || wake || window.miraYouTube(question)) && await run(question)) return;
       if (session !== mira) return;
       if (!codex && (!S.engineReady || !S.model)) {
         say('Выберите модель в чате.');
