@@ -51,6 +51,11 @@ window.parseMiraCodex = (text) => {
   const synthesis = window.speechSynthesis;
   if (voiceButton) {
     const preference = 'usb-ai-speak-replies';
+    const voicePreference = 'usb-ai-voice';
+    let selectedVoice = '';
+    let lowered = false;
+    let currentAudio = null;
+    try { selectedVoice = localStorage.getItem(voicePreference) || ''; } catch {}
     let enabled = true;
     let active = null;
     let piperAvailable = true;
@@ -63,10 +68,19 @@ window.parseMiraCodex = (text) => {
       voiceButton.title = enabled ? 'Озвучивание включено' : 'Озвучивание выключено';
     }
 
+    function lowerVoice(value) {
+      if (lowered === value) return;
+      lowered = value;
+      if (currentAudio) currentAudio.volume = value ? 0.06 : 1;
+      else if (value && synthesis?.speaking) synthesis.pause();
+      else if (!value && synthesis?.paused) synthesis.resume();
+    }
+
     function stopVoice() {
       active?.cancel();
       active = null;
       synthesis?.cancel();
+      lowerVoice(false);
     }
 
     function startVoice() {
@@ -106,7 +120,7 @@ window.parseMiraCodex = (text) => {
         queue = queue.then(async () => {
           if (abort.signal.aborted) return;
           const russian = /[А-Яа-яЁё]/.test(text);
-          if (russian && piperAvailable && await playPiper(text)) return;
+          if (russian && !selectedVoice && piperAvailable && await playPiper(text)) return;
           if (!abort.signal.aborted) await playBrowser(text, russian);
         }).catch(() => {
           if (active === session) say('Не удалось озвучить ответ.');
@@ -126,6 +140,8 @@ window.parseMiraCodex = (text) => {
           const url = URL.createObjectURL(wav);
           try {
             const audio = new Audio(url);
+            currentAudio = audio;
+            audio.volume = lowered ? 0.06 : 1;
             let stop;
             try {
               await new Promise((resolve, reject) => {
@@ -137,6 +153,7 @@ window.parseMiraCodex = (text) => {
               });
             } finally {
               abort.signal.removeEventListener('abort', stop);
+              if (currentAudio === audio) currentAudio = null;
             }
           } finally {
             URL.revokeObjectURL(url);
@@ -158,13 +175,17 @@ window.parseMiraCodex = (text) => {
           const voice = synthesis.getVoices().find(
             (candidate) => candidate.localService && candidate.lang.toLowerCase().split(/[-_]/)[0] === lang,
           );
-          if (voice) line.voice = voice;
+          const preferred = russian && synthesis.getVoices().find(
+          (candidate) => candidate.localService && candidate.voiceURI === selectedVoice,
+        );
+        if (preferred || voice) line.voice = preferred || voice;
           line.onend = resolve;
           line.onerror = (event) => {
             if (['canceled', 'interrupted'].includes(event.error)) resolve();
             else reject(new Error(event.error));
           };
           synthesis.speak(line);
+          if (lowered) synthesis.pause();
         });
       }
 
@@ -194,7 +215,38 @@ window.parseMiraCodex = (text) => {
       return session;
     }
 
-    window.personalVoice = {start: startVoice, stop: stopVoice, playing: () => active?.playing()};
+    window.personalVoice = {
+      start: startVoice, stop: stopVoice, lower: lowerVoice, playing: () => active?.playing(),
+    };
+    if (synthesis && typeof voiceButton.after === 'function') {
+      const select = document.createElement('select');
+      select.setAttribute('aria-label', 'Голос Миры');
+      select.title = 'Голос Миры';
+      select.style.cssText = 'max-width:9rem;color:inherit;background:var(--bg);padding:4px;border-radius:6px';
+      function refreshVoices() {
+        const option = (label, value) => {
+          const item = document.createElement('option');
+          item.textContent = label;
+          item.value = value;
+          return item;
+        };
+        const voices = synthesis.getVoices().filter(
+          (voice) => voice.localService && /^ru(?:[-_]|$)/i.test(voice.lang),
+        );
+        select.replaceChildren(option('Ирина', ''),
+          ...voices.map((voice) => option(voice.name, voice.voiceURI)));
+        select.value = selectedVoice;
+        if (select.selectedIndex < 0) select.selectedIndex = 0;
+        select.hidden = !voices.length;
+      }
+      refreshVoices();
+      synthesis.addEventListener?.('voiceschanged', refreshVoices);
+      voiceButton.after(select);
+      select.addEventListener('change', () => {
+        selectedVoice = select.value;
+        try { localStorage.setItem(voicePreference, selectedVoice); } catch {}
+      });
+    }
     voiceButton.classList.add('ib2');
     voiceButton.hidden = false;
     updateVoiceButton();
@@ -314,6 +366,7 @@ window.parseMiraCodex = (text) => {
     setCodexMode(session, false);
     pendingDelete = null;
     session.abort.abort();
+    window.personalVoice?.lower(false);
     session.processor?.disconnect();
     session.stream?.getTracks().forEach((track) => track.stop());
     session.context?.close().catch(() => {});
@@ -450,6 +503,7 @@ window.parseMiraCodex = (text) => {
       say(error.message || 'Не удалось распознать речь.');
     } finally {
       session.busy = false;
+      if (interruptOnly && session === mira) window.personalVoice?.lower(false);
     }
   }
 
@@ -470,7 +524,7 @@ window.parseMiraCodex = (text) => {
     let interruptOnly = false;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true},
+        audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true},
       });
       if (session !== mira) {
         stream.getTracks().forEach((track) => track.stop());
@@ -510,11 +564,13 @@ window.parseMiraCodex = (text) => {
         interruptOnly ||= replying;
         chunks.push(samples.slice());
         if (speaking) voiced++;
+        if (interruptOnly && voiced >= 2) window.personalVoice?.lower(true);
         silence = speaking ? 0 : silence + 1;
         const silenceLimit = interruptOnly ? 3 : 6;
         const clipLimit = interruptOnly ? 20 : 90;
         if (silence >= silenceLimit || chunks.length >= clipLimit) {
           if (voiced >= 2) recognizeMira(session, chunks, interruptOnly);
+          else if (interruptOnly) window.personalVoice?.lower(false);
           chunks = [];
           voiced = silence = 0;
           interruptOnly = false;
